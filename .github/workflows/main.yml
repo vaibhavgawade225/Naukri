@@ -21,3 +21,11 @@ jobs:
         env:
           NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
         run: python apply_and_refresh.py
+      
+      # THIS SECTION ADDS THE SCREENSHOTS
+      - name: Upload Debug Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: naukri-apply-debug
+          path: "*.png"
