@@ -1,0 +1,25 @@
+name: Naukri Daily Automation
+on:
+  schedule:
+    - cron: '30 3 * * *' # 9:00 AM IST (3:30 AM UTC)
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install selenium webdriver-manager
+
+      - name: Execute Script
+        env:
+          NAUKRI_COOKIES: ${{ secrets.NAUKRI_COOKIES }}
+        run: python apply_and_refresh.py
