@@ -32,4 +32,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: naukri-apply-debug
-          path: "*.png"
+          path: ./*.png  # Added ./ to ensure it looks in the current directory
