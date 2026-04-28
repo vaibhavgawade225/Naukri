@@ -2,8 +2,12 @@ name: Naukri Daily Automation
 
 on:
   schedule:
-    - cron: '21 0 * * *' # ~6 AM IST
-    - cron: '26 11 * * *' # ~5 PM IST
+    # 6:12 AM IST (00:42 UTC)
+    - cron: '42 0 * * *'
+    # 12:18 PM IST (06:48 UTC)
+    - cron: '48 6 * * *'
+    # 5:24 PM IST (11:54 UTC)
+    - cron: '54 11 * * *'
   workflow_dispatch:
 
 jobs:
