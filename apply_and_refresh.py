@@ -21,15 +21,18 @@ MY_PROFILE_DATA = {
 
 def handle_access_denied(driver):
     """Detects Access Denied page and refreshes to bypass."""
-    for i in range(2): 
-        content = driver.page_source.lower()
-        if "access denied" in content or "403" in driver.title or "something went wrong" in content:
-            print(f"Access Denied or Loading Loop detected. Refresh attempt {i+1}...")
-            time.sleep(random.uniform(5, 8))
-            driver.refresh()
-            time.sleep(10)
-        else:
-            return True
+    try:
+        for i in range(2): 
+            content = driver.page_source.lower()
+            if "access denied" in content or "403" in driver.title or "something went wrong" in content:
+                print(f"Access Denied detected. Refresh attempt {i+1}...")
+                time.sleep(random.uniform(5, 8))
+                driver.refresh()
+                time.sleep(10)
+            else:
+                return True
+    except:
+        pass
     return False
 
 def clear_overlays(driver):
@@ -63,7 +66,8 @@ def answer_questions(driver):
             elif "relocate" in text:
                 choice = MY_PROFILE_DATA["relocation"].lower()
                 for rb in wrapper.find_elements(By.XPATH, ".//input[@type='radio']"):
-                    if choice in rb.get_attribute("value").lower() or choice in rb.find_element(By.XPATH, "..").text.lower():
+                    parent_text = rb.find_element(By.XPATH, "..").text.lower()
+                    if choice in rb.get_attribute("value").lower() or choice in parent_text:
                         driver.execute_script("arguments[0].click();", rb)
                         break
         
@@ -72,10 +76,12 @@ def answer_questions(driver):
             driver.execute_script("arguments[0].click();", submit[0])
         
         driver.switch_to.default_content()
-    except: pass
+    except:
+        try: driver.switch_to.default_content()
+        except: pass
 
 def run_automation():
-    print("Starting Smart-Apply with Corrected Indentation...")
+    print("Starting Smart-Apply...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     chrome_options = Options()
@@ -109,7 +115,7 @@ def run_automation():
                 driver.switch_to.window(driver.window_handles[0])
                 clear_overlays(driver)
                 
-                job_cards = WebDriverWait(driver, 10).until(
+                job_cards = WebDriverWait(driver, 15).until(
                     EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]"))
                 )
                 
@@ -126,22 +132,46 @@ def run_automation():
                 WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > len(old_handles))
                 driver.switch_to.window(driver.window_handles[-1])
 
-                time.sleep(5) 
+                time.sleep(6) 
                 handle_access_denied(driver)
                 
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
-                time.sleep(2)
+                time.sleep(3)
 
-                apply_xpath = "//button[text()='Apply'] | //button[contains(text(), 'Apply')] | //input[@value='Apply'] | //button[@id='apply-button']"
+                apply_xpath = "//button[text()='Apply' or text()='Apply on company site'] | //button[contains(text(), 'Apply')] | //input[@value='Apply'] | //button[@id='apply-button']"
                 
                 try:
-                    apply_btn = WebDriverWait(driver, 10).until(
+                    apply_btn = WebDriverWait(driver, 12).until(
                         EC.element_to_be_clickable((By.XPATH, apply_xpath))
                     )
                     driver.execute_script("arguments[0].click();", apply_btn)
                     print(f"✅ Job {i+1}: Apply Clicked.")
-                    time.sleep(4)
+                    time.sleep(5)
 
-                    # FIXED INDENTATION HERE
                     if "question" in driver.page_source.lower():
                         answer_questions(driver)
+                    
+                    applied_count += 1
+                except Exception as apply_err:
+                    print(f"⚠️ Job {i+1}: Could not click apply button.")
+
+                driver.save_screenshot(f"job_{i+1}_result.png")
+
+            except Exception as e:
+                print(f"❌ Job {i+1} Failed: {str(e)[:50]}")
+            
+            finally:
+                while len(driver.window_handles) > 1:
+                    driver.switch_to.window(driver.window_handles[-1])
+                    driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+
+        print(f"FINISHED: Total Processed: {applied_count}")
+
+    except Exception as e:
+        print(f"FATAL ERROR: {str(e)}")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    run_automation()
