@@ -65,6 +65,7 @@ def run_automation():
                 if apply_btn:
                     driver.execute_script("arguments[0].click();", apply_btn[0])
                     print(f"✅ Applied to job {i+1}")
+                    driver.save_screenshot(f"applied_job_{i+1}.png") 
                     applied_count += 1
                     time.sleep(3)
                 
