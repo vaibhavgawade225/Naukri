@@ -22,8 +22,9 @@ MY_PROFILE_DATA = {
 def handle_access_denied(driver):
     """Detects Access Denied page and refreshes to bypass."""
     for i in range(2): 
-        if "access denied" in driver.page_source.lower() or "403" in driver.title:
-            print(f"Access Denied detected. Refresh attempt {i+1}...")
+        content = driver.page_source.lower()
+        if "access denied" in content or "403" in driver.title or "something went wrong" in content:
+            print(f"Access Denied or Loading Loop detected. Refresh attempt {i+1}...")
             time.sleep(random.uniform(5, 8))
             driver.refresh()
             time.sleep(10)
@@ -35,8 +36,11 @@ def clear_overlays(driver):
     """Forcefully removes any popups or loading layers that block clicks."""
     try:
         driver.execute_script("""
-            let overlays = document.querySelectorAll('.layers, .modal, .gnb-overlay, .crossIcon, [class*="close"]');
-            overlays.forEach(el => el.click());
+            let selectors = ['.layers', '.modal', '.gnb-overlay', '.crossIcon', '[class*="close"]', '.drawer-wrapper'];
+            selectors.forEach(s => {
+                let elements = document.querySelectorAll(s);
+                elements.forEach(el => el.remove());
+            });
         """)
     except:
         pass
@@ -44,7 +48,11 @@ def clear_overlays(driver):
 def answer_questions(driver):
     """Smart-answer logic for questionnaires."""
     try:
-        wrappers = driver.find_elements(By.XPATH, "//div[contains(@class, 'question')] | //li[contains(@class, 'item')]")
+        # Check if we are in an iframe (common for questionnaires)
+        if len(driver.find_elements(By.TAG_NAME, "iframe")) > 0:
+            driver.switch_to.frame(0)
+
+        wrappers = driver.find_elements(By.XPATH, "//div[contains(@class, 'question')] | //li[contains(@class, 'item')] | //div[contains(@class, 'qna')]")
         for wrapper in wrappers:
             text = wrapper.text.lower()
             inputs = wrapper.find_elements(By.XPATH, ".//input | .//select | .//textarea")
@@ -63,6 +71,8 @@ def answer_questions(driver):
         submit = driver.find_elements(By.XPATH, "//button[contains(text(), 'Submit') or contains(text(), 'Save')]")
         if submit: 
             driver.execute_script("arguments[0].click();", submit[0])
+        
+        driver.switch_to.default_content() # Exit iframe
     except: pass
 
 def run_automation():
@@ -88,7 +98,6 @@ def run_automation():
                 name, value = item.strip().split('=', 1)
                 driver.add_cookie({'name': name, 'value': value, 'domain': '.naukri.com', 'path': '/'})
 
-        # Freshness Sort
         search_url = "https://www.naukri.com/java-developer-jobs?experience=0&experience=1&experience=2&sort=f"
         driver.get(search_url)
         time.sleep(10)
@@ -96,13 +105,16 @@ def run_automation():
 
         applied_count = 0
         
-     # Main Loop: Refetch job cards every time
         for i in range(7):
             try:
                 driver.switch_to.window(driver.window_handles[0])
                 clear_overlays(driver)
                 
-                job_cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]")
+                # Re-find cards to avoid stale elements
+                job_cards = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]"))
+                )
+                
                 if i >= len(job_cards): break
                 
                 card = job_cards[i]
@@ -110,53 +122,32 @@ def run_automation():
                 time.sleep(2)
 
                 title_link = card.find_element(By.XPATH, ".//a[@class='title ']")
-                driver.execute_script("arguments[0].click();", title_link)
-                time.sleep(8) # Increased wait for the new tab
                 
-                if len(driver.window_handles) > 1:
-                    driver.switch_to.window(driver.window_handles[-1])
-                else:
-                    continue
+                # Get current handles before clicking
+                old_handles = driver.window_handles
+                driver.execute_script("arguments[0].click();", title_link)
+                
+                # Wait for the new tab to actually exist
+                WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > len(old_handles))
+                driver.switch_to.window(driver.window_handles[-1])
 
-                # --- NEW LOADING FIX ---
-                # Force wait for the body to be present and scroll down to trigger lazy loading
-                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                driver.execute_script("window.scrollTo(0, 500);") 
-                time.sleep(3)
+                # --- LOADING FIX ---
+                time.sleep(5) 
+                handle_access_denied(driver)
+                
+                # Scroll to trigger lazy loading of the Apply button
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
+                time.sleep(2)
 
-                if not handle_access_denied(driver):
-                    print(f"Job {i+1}: Blocked/Loading Loop.")
-                    driver.save_screenshot(f"job_{i+1}_blocked.png")
-                else:
-                    # Try to find Apply button with multiple XPATH variants
-                    apply_xpath = "//button[contains(text(), 'Apply')] | //button[@id='apply-button'] | //span[text()='Apply']"
-                    
-                    try:
-                        apply_btn = WebDriverWait(driver, 12).until(
-                            EC.presence_of_element_located((By.XPATH, apply_xpath))
-                        )
-                        # Ensure it's in view
-                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", apply_btn)
-                        time.sleep(2)
-                        
-                        # Force click via JavaScript
-                        driver.execute_script("arguments[0].click();", apply_btn)
-                        print(f"✅ Job {i+1}: Applied successfully.")
-                    except:
-                        print(f"⚠️ Job {i+1}: Button not found (likely already applied or redirect).")
-                    
-                    driver.save_screenshot(f"job_{i+1}_final_state.png")
+                # Try finding Apply button with more robust selectors
+                apply_xpath = "//button[text()='Apply'] | //button[contains(text(), 'Apply')] | //input[@value='Apply'] | //button[@id='apply-button']"
+                
+                try:
+                    apply_btn = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, apply_xpath))
+                    )
+                    driver.execute_script("arguments[0].click();", apply_btn)
+                    print(f"✅ Job {i+1}: Apply Clicked.")
+                    time.sleep(4)
 
                     if "question" in driver.page_source.lower():
-                        answer_questions(driver)
-                        time.sleep(3)
-
-            except Exception as e:
-                print(f"❌ Job {i+1} Error: {str(e)[:50]}")
-                driver.save_screenshot(f"job_{i+1}_crash.png")
-            
-            finally:
-                while len(driver.window_handles) > 1:
-                    driver.switch_to.window(driver.window_handles[-1])
-                    driver.close()
-                driver.switch_to.window(driver.window_handles[0])
