@@ -96,14 +96,12 @@ def run_automation():
 
         applied_count = 0
         
-        # Main Loop: Refetch job cards every time to avoid stale elements
+     # Main Loop: Refetch job cards every time
         for i in range(7):
             try:
-                # 1. Back to main tab and clear junk
                 driver.switch_to.window(driver.window_handles[0])
                 clear_overlays(driver)
                 
-                # 2. Refetch cards
                 job_cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]")
                 if i >= len(job_cards): break
                 
@@ -111,56 +109,54 @@ def run_automation():
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
                 time.sleep(2)
 
-                # 3. Open job in new tab
                 title_link = card.find_element(By.XPATH, ".//a[@class='title ']")
                 driver.execute_script("arguments[0].click();", title_link)
-                time.sleep(5)
+                time.sleep(8) # Increased wait for the new tab
                 
-                # Switch to new tab
                 if len(driver.window_handles) > 1:
                     driver.switch_to.window(driver.window_handles[-1])
                 else:
                     continue
 
-                # 4. Check for blocking content on job page
-                if not handle_access_denied(driver):
-                    print(f"Job {i+1}: Blocked by Access Denied.")
-                else:
-                    driver.save_screenshot(f"job_{i+1}_loaded.png")
-                    
-                    # 5. Robust Apply Click
-                    apply_btn = WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.XPATH, "//button[contains(text(), 'Apply')] | //button[@id='apply-button']"))
-                    )
-                    driver.execute_script("arguments[0].click();", apply_btn)
-                    print(f"Job {i+1}: Clicked Apply.")
-                    time.sleep(5)
+                # --- NEW LOADING FIX ---
+                # Force wait for the body to be present and scroll down to trigger lazy loading
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                driver.execute_script("window.scrollTo(0, 500);") 
+                time.sleep(3)
 
-                    # 6. Handle Questions
+                if not handle_access_denied(driver):
+                    print(f"Job {i+1}: Blocked/Loading Loop.")
+                    driver.save_screenshot(f"job_{i+1}_blocked.png")
+                else:
+                    # Try to find Apply button with multiple XPATH variants
+                    apply_xpath = "//button[contains(text(), 'Apply')] | //button[@id='apply-button'] | //span[text()='Apply']"
+                    
+                    try:
+                        apply_btn = WebDriverWait(driver, 12).until(
+                            EC.presence_of_element_located((By.XPATH, apply_xpath))
+                        )
+                        # Ensure it's in view
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", apply_btn)
+                        time.sleep(2)
+                        
+                        # Force click via JavaScript
+                        driver.execute_script("arguments[0].click();", apply_btn)
+                        print(f"✅ Job {i+1}: Applied successfully.")
+                    except:
+                        print(f"⚠️ Job {i+1}: Button not found (likely already applied or redirect).")
+                    
+                    driver.save_screenshot(f"job_{i+1}_final_state.png")
+
                     if "question" in driver.page_source.lower():
                         answer_questions(driver)
                         time.sleep(3)
-                    
-                    applied_count += 1
-                    print(f"Job {i+1}: Processed.")
 
             except Exception as e:
-                print(f"Job {i+1} Failed: {str(e)[:50]}")
-                driver.save_screenshot(f"job_{i+1}_error.png")
+                print(f"❌ Job {i+1} Error: {str(e)[:50]}")
+                driver.save_screenshot(f"job_{i+1}_crash.png")
             
             finally:
-                # 7. Safety: Close all tabs except the main search page
                 while len(driver.window_handles) > 1:
                     driver.switch_to.window(driver.window_handles[-1])
                     driver.close()
                 driver.switch_to.window(driver.window_handles[0])
-
-        print(f"FINISHED: Total Processed: {applied_count}")
-
-    except Exception as e:
-        print(f"FATAL ERROR: {str(e)}")
-    finally:
-        driver.quit()
-
-if __name__ == "__main__":
-    run_automation()
