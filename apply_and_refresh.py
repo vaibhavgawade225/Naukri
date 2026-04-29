@@ -44,36 +44,42 @@ def run_automation():
         # 4. Find Job Cards
         job_cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]")
         print(f"Found {len(job_cards)} jobs.")
+        driver.save_screenshot("0_search_results_check.png") 
 
         applied_count = 0
-        # Only try first 5 to keep it simple and safe
         for i in range(len(job_cards[:5])):
             try:
-                # Re-fetch cards every loop to avoid 'Stale' errors
                 cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]")
                 title = cards[i].find_element(By.CSS_SELECTOR, "a.title")
                 
-                # Use JavaScript to click to bypass transparent overlays
                 driver.execute_script("arguments[0].click();", title)
                 time.sleep(6)
                 
-                # Switch to new tab
                 driver.switch_to.window(driver.window_handles[-1])
                 
-                # Look for ANY apply button
+                # --- VERIFICATION STEP ---
                 apply_btn = driver.find_elements(By.XPATH, "//button[contains(text(), 'Apply')] | //button[@id='apply-button']")
+                
                 if apply_btn:
+                    # Capture page BEFORE clicking to see the button exists
+                    driver.save_screenshot(f"job_{i+1}_BEFORE_click.png")
+                    
                     driver.execute_script("arguments[0].click();", apply_btn[0])
-                    print(f"✅ Applied to job {i+1}")
-                    driver.save_screenshot(f"applied_job_{i+1}.png") 
+                    print(f"✅ Clicked Apply for job {i+1}")
+                    
+                    time.sleep(4)
+                    # Capture page AFTER clicking to see the 'Success' message
+                    driver.save_screenshot(f"job_{i+1}_AFTER_click.png")
                     applied_count += 1
-                    time.sleep(3)
+                else:
+                    print(f"⚠️ No apply button found for job {i+1} (maybe already applied)")
+                    driver.save_screenshot(f"job_{i+1}_not_found.png")
                 
                 driver.close()
                 driver.switch_to.window(driver.window_handles[0])
                 time.sleep(2)
-            except Exception:
-                print(f"❌ Skipping job {i+1}")
+            except Exception as e:
+                print(f"❌ Error at job {i+1}: {str(e)[:50]}")
                 if len(driver.window_handles) > 1:
                     driver.close()
                     driver.switch_to.window(driver.window_handles[0])
