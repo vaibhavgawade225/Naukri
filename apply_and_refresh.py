@@ -48,7 +48,6 @@ def clear_overlays(driver):
 def answer_questions(driver):
     """Smart-answer logic for questionnaires."""
     try:
-        # Check if we are in an iframe (common for questionnaires)
         if len(driver.find_elements(By.TAG_NAME, "iframe")) > 0:
             driver.switch_to.frame(0)
 
@@ -72,11 +71,11 @@ def answer_questions(driver):
         if submit: 
             driver.execute_script("arguments[0].click();", submit[0])
         
-        driver.switch_to.default_content() # Exit iframe
+        driver.switch_to.default_content()
     except: pass
 
 def run_automation():
-    print("Starting Smart-Apply with Robust Tab Management...")
+    print("Starting Smart-Apply with Corrected Indentation...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     chrome_options = Options()
@@ -110,7 +109,6 @@ def run_automation():
                 driver.switch_to.window(driver.window_handles[0])
                 clear_overlays(driver)
                 
-                # Re-find cards to avoid stale elements
                 job_cards = WebDriverWait(driver, 10).until(
                     EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]"))
                 )
@@ -122,24 +120,18 @@ def run_automation():
                 time.sleep(2)
 
                 title_link = card.find_element(By.XPATH, ".//a[@class='title ']")
-                
-                # Get current handles before clicking
                 old_handles = driver.window_handles
                 driver.execute_script("arguments[0].click();", title_link)
                 
-                # Wait for the new tab to actually exist
                 WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > len(old_handles))
                 driver.switch_to.window(driver.window_handles[-1])
 
-                # --- LOADING FIX ---
                 time.sleep(5) 
                 handle_access_denied(driver)
                 
-                # Scroll to trigger lazy loading of the Apply button
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
                 time.sleep(2)
 
-                # Try finding Apply button with more robust selectors
                 apply_xpath = "//button[text()='Apply'] | //button[contains(text(), 'Apply')] | //input[@value='Apply'] | //button[@id='apply-button']"
                 
                 try:
@@ -150,4 +142,6 @@ def run_automation():
                     print(f"✅ Job {i+1}: Apply Clicked.")
                     time.sleep(4)
 
+                    # FIXED INDENTATION HERE
                     if "question" in driver.page_source.lower():
+                        answer_questions(driver)
