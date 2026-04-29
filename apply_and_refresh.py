@@ -21,7 +21,7 @@ MY_PROFILE_DATA = {
 
 def handle_access_denied(driver):
     """Detects Access Denied page and refreshes to bypass."""
-    for i in range(2): # Try refreshing twice
+    for i in range(2): 
         if "access denied" in driver.page_source.lower() or "403" in driver.title:
             print(f"Access Denied detected. Refresh attempt {i+1}...")
             time.sleep(random.uniform(5, 8))
@@ -30,6 +30,16 @@ def handle_access_denied(driver):
         else:
             return True
     return False
+
+def clear_overlays(driver):
+    """Forcefully removes any popups or loading layers that block clicks."""
+    try:
+        driver.execute_script("""
+            let overlays = document.querySelectorAll('.layers, .modal, .gnb-overlay, .crossIcon, [class*="close"]');
+            overlays.forEach(el => el.click());
+        """)
+    except:
+        pass
 
 def answer_questions(driver):
     """Smart-answer logic for questionnaires."""
@@ -51,11 +61,12 @@ def answer_questions(driver):
                         break
         
         submit = driver.find_elements(By.XPATH, "//button[contains(text(), 'Submit') or contains(text(), 'Save')]")
-        if submit: submit[0].click()
+        if submit: 
+            driver.execute_script("arguments[0].click();", submit[0])
     except: pass
 
 def run_automation():
-    print("Starting Smart-Apply with Access Bypass...")
+    print("Starting Smart-Apply with Robust Tab Management...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     chrome_options = Options()
@@ -77,59 +88,74 @@ def run_automation():
                 name, value = item.strip().split('=', 1)
                 driver.add_cookie({'name': name, 'value': value, 'domain': '.naukri.com', 'path': '/'})
 
-        # Sort by latest (Freshness)
+        # Freshness Sort
         search_url = "https://www.naukri.com/java-developer-jobs?experience=0&experience=1&experience=2&sort=f"
         driver.get(search_url)
         time.sleep(10)
-        
-        # Check if search page is blocked
         handle_access_denied(driver)
 
-        job_cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]")
         applied_count = 0
-
-        for i, card in enumerate(job_cards[:7]):
+        
+        # Main Loop: Refetch job cards every time to avoid stale elements
+        for i in range(7):
             try:
-                # Randomized human delay before opening each job
-                time.sleep(random.uniform(3, 6))
+                # 1. Back to main tab and clear junk
+                driver.switch_to.window(driver.window_handles[0])
+                clear_overlays(driver)
                 
+                # 2. Refetch cards
+                job_cards = driver.find_elements(By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]")
+                if i >= len(job_cards): break
+                
+                card = job_cards[i]
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
+                time.sleep(2)
+
+                # 3. Open job in new tab
                 title_link = card.find_element(By.XPATH, ".//a[@class='title ']")
-                title_link.click()
-                time.sleep(6)
+                driver.execute_script("arguments[0].click();", title_link)
+                time.sleep(5)
                 
-                driver.switch_to.window(driver.window_handles[-1])
-                
-                # CRITICAL: Check for Access Denied on the Job Page
-                if not handle_access_denied(driver):
-                    print(f"Skipping Job {i+1}: Blocked by Access Denied.")
-                    driver.close()
-                    driver.switch_to.window(driver.window_handles[0])
+                # Switch to new tab
+                if len(driver.window_handles) > 1:
+                    driver.switch_to.window(driver.window_handles[-1])
+                else:
                     continue
 
-                driver.save_screenshot(f"job_{i+1}_loaded.png")
-                
-                apply_btn = WebDriverWait(driver, 8).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Apply')] | //button[@id='apply-button']"))
-                )
-                apply_btn.click()
-                time.sleep(5)
+                # 4. Check for blocking content on job page
+                if not handle_access_denied(driver):
+                    print(f"Job {i+1}: Blocked by Access Denied.")
+                else:
+                    driver.save_screenshot(f"job_{i+1}_loaded.png")
+                    
+                    # 5. Robust Apply Click
+                    apply_btn = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, "//button[contains(text(), 'Apply')] | //button[@id='apply-button']"))
+                    )
+                    driver.execute_script("arguments[0].click();", apply_btn)
+                    print(f"Job {i+1}: Clicked Apply.")
+                    time.sleep(5)
 
-                # Handle questionnaire
-                if "question" in driver.page_source.lower():
-                    answer_questions(driver)
-                    time.sleep(3)
+                    # 6. Handle Questions
+                    if "question" in driver.page_source.lower():
+                        answer_questions(driver)
+                        time.sleep(3)
+                    
+                    applied_count += 1
+                    print(f"Job {i+1}: Processed.")
 
-                print(f"Job {i+1}: Success.")
-                applied_count += 1
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
             except Exception as e:
-                print(f"Job {i+1} Failed: {str(e)[:40]}")
-                if len(driver.window_handles) > 1:
+                print(f"Job {i+1} Failed: {str(e)[:50]}")
+                driver.save_screenshot(f"job_{i+1}_error.png")
+            
+            finally:
+                # 7. Safety: Close all tabs except the main search page
+                while len(driver.window_handles) > 1:
+                    driver.switch_to.window(driver.window_handles[-1])
                     driver.close()
-                    driver.switch_to.window(driver.window_handles[0])
+                driver.switch_to.window(driver.window_handles[0])
 
-        print(f"FINISHED: Total Applied: {applied_count}")
+        print(f"FINISHED: Total Processed: {applied_count}")
 
     except Exception as e:
         print(f"FATAL ERROR: {str(e)}")
