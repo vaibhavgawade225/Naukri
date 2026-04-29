@@ -22,39 +22,35 @@ MY_PROFILE_DATA = {
 def handle_access_denied(driver):
     """Detects Access Denied page and refreshes to bypass."""
     try:
-        for i in range(2): 
-            content = driver.page_source.lower()
-            if "access denied" in content or "403" in driver.title or "something went wrong" in content:
-                print(f"Access Denied detected. Refresh attempt {i+1}...")
-                time.sleep(random.uniform(5, 8))
-                driver.refresh()
-                time.sleep(10)
-            else:
-                return True
-    except:
-        pass
-    return False
+        content = driver.page_source.lower()
+        if "access denied" in content or "403" in driver.title:
+            print("Access Denied detected. Refreshing...")
+            time.sleep(5)
+            driver.refresh()
+            time.sleep(8)
+            return "access denied" not in driver.page_source.lower()
+    except: pass
+    return True
 
 def clear_overlays(driver):
-    """Forcefully removes any popups or loading layers that block clicks."""
+    """Forcefully removes any popups or loading layers."""
     try:
         driver.execute_script("""
-            let selectors = ['.layers', '.modal', '.gnb-overlay', '.crossIcon', '[class*="close"]', '.drawer-wrapper'];
+            let selectors = ['.layers', '.modal', '.gnb-overlay', '.crossIcon', '[class*="close"]', '.drawer-wrapper', '#block'];
             selectors.forEach(s => {
-                let elements = document.querySelectorAll(s);
-                elements.forEach(el => el.remove());
+                document.querySelectorAll(s).forEach(el => el.remove());
             });
         """)
-    except:
-        pass
+    except: pass
 
 def answer_questions(driver):
     """Smart-answer logic for questionnaires."""
     try:
+        # Check for iframes
         if len(driver.find_elements(By.TAG_NAME, "iframe")) > 0:
             driver.switch_to.frame(0)
 
-        wrappers = driver.find_elements(By.XPATH, "//div[contains(@class, 'question')] | //li[contains(@class, 'item')] | //div[contains(@class, 'qna')]")
+        wrappers = driver.find_elements(By.XPATH, "//div[contains(@class, 'question')] | //li[contains(@class, 'item')]")
         for wrapper in wrappers:
             text = wrapper.text.lower()
             inputs = wrapper.find_elements(By.XPATH, ".//input | .//select | .//textarea")
@@ -66,17 +62,14 @@ def answer_questions(driver):
             elif "relocate" in text:
                 choice = MY_PROFILE_DATA["relocation"].lower()
                 for rb in wrapper.find_elements(By.XPATH, ".//input[@type='radio']"):
-                    parent_text = rb.find_element(By.XPATH, "..").text.lower()
-                    if choice in rb.get_attribute("value").lower() or choice in parent_text:
+                    if choice in rb.get_attribute("value").lower() or choice in rb.find_element(By.XPATH, "..").text.lower():
                         driver.execute_script("arguments[0].click();", rb)
                         break
         
         submit = driver.find_elements(By.XPATH, "//button[contains(text(), 'Submit') or contains(text(), 'Save')]")
-        if submit: 
-            driver.execute_script("arguments[0].click();", submit[0])
-        
+        if submit: driver.execute_script("arguments[0].click();", submit[0])
         driver.switch_to.default_content()
-    except:
+    except: 
         try: driver.switch_to.default_content()
         except: pass
 
@@ -90,7 +83,6 @@ def run_automation():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
 
     driver = webdriver.Chrome(options=chrome_options)
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", fix_hairline=True)
@@ -105,62 +97,60 @@ def run_automation():
 
         search_url = "https://www.naukri.com/java-developer-jobs?experience=0&experience=1&experience=2&sort=f"
         driver.get(search_url)
-        time.sleep(10)
-        handle_access_denied(driver)
-
-        applied_count = 0
+        time.sleep(8)
         
+        applied_count = 0
         for i in range(7):
             try:
+                # Always start from the main search tab
                 driver.switch_to.window(driver.window_handles[0])
                 clear_overlays(driver)
                 
-                job_cards = WebDriverWait(driver, 15).until(
+                # Refresh job list to avoid stale elements
+                job_cards = WebDriverWait(driver, 10).until(
                     EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'srp-jobtuple-wrapper')]"))
                 )
                 
                 if i >= len(job_cards): break
-                
                 card = job_cards[i]
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
-                time.sleep(2)
-
+                
+                # Click Title to open new tab
                 title_link = card.find_element(By.XPATH, ".//a[@class='title ']")
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", title_link)
+                time.sleep(1)
+                
                 old_handles = driver.window_handles
                 driver.execute_script("arguments[0].click();", title_link)
                 
+                # Wait for tab and switch
                 WebDriverWait(driver, 10).until(lambda d: len(d.window_handles) > len(old_handles))
                 driver.switch_to.window(driver.window_handles[-1])
-
-                time.sleep(6) 
+                
+                # Wait for page load
+                time.sleep(5)
                 handle_access_denied(driver)
+                driver.execute_script("window.scrollTo(0, 400);")
                 
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/4);")
-                time.sleep(3)
-
-                apply_xpath = "//button[text()='Apply' or text()='Apply on company site'] | //button[contains(text(), 'Apply')] | //input[@value='Apply'] | //button[@id='apply-button']"
+                # Apply Logic
+                apply_xpath = "//button[text()='Apply'] | //button[contains(text(), 'Apply')] | //input[@value='Apply']"
+                apply_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, apply_xpath)))
                 
-                try:
-                    apply_btn = WebDriverWait(driver, 12).until(
-                        EC.element_to_be_clickable((By.XPATH, apply_xpath))
-                    )
-                    driver.execute_script("arguments[0].click();", apply_btn)
-                    print(f"✅ Job {i+1}: Apply Clicked.")
-                    time.sleep(5)
-
-                    if "question" in driver.page_source.lower():
-                        answer_questions(driver)
-                    
-                    applied_count += 1
-                except Exception as apply_err:
-                    print(f"⚠️ Job {i+1}: Could not click apply button.")
-
-                driver.save_screenshot(f"job_{i+1}_result.png")
+                driver.execute_script("arguments[0].click();", apply_btn)
+                print(f"✅ Job {i+1}: Apply Clicked.")
+                time.sleep(4)
+                
+                if "question" in driver.page_source.lower():
+                    answer_questions(driver)
+                
+                applied_count += 1
+                driver.save_screenshot(f"job_{i+1}_success.png")
 
             except Exception as e:
-                print(f"❌ Job {i+1} Failed: {str(e)[:50]}")
+                print(f"⚠️ Job {i+1}: Could not apply (likely already applied or redirect).")
+                driver.save_screenshot(f"job_{i+1}_error.png")
             
             finally:
+                # CRITICAL: Close all extra tabs before next loop
                 while len(driver.window_handles) > 1:
                     driver.switch_to.window(driver.window_handles[-1])
                     driver.close()
