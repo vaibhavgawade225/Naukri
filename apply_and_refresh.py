@@ -12,7 +12,7 @@ from selenium_stealth import stealth
 MY_PROFILE_DATA = {
     "current_ctc": "3,00,000",      
     "expected_ctc": "5,00,000",     
-    "notice_period": "15",          # Number of days
+    "notice_period": "7",          # Number of days
     "experience": "2",
     "relocation": "Yes"             # Always says 'Yes' to stay in the running
 }
