@@ -10,16 +10,37 @@ from selenium_stealth import stealth
 MY_PROFILE_DATA = {
     "current_ctc": "3,00,000",      
     "expected_ctc": "5,00,000",     
-    "notice_period": "15",          
+    "notice_period": "7",          
     "experience": "2",
     "relocation": "Yes"
 }
 
+def inject_cookies(driver):
+    """Safely injects cookies and verifies session."""
+    cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
+    if not cookie_raw:
+        print("❌ No NAUKRI_COOKIE found in Secrets!")
+        return
+    
+    print("🍪 Injecting session cookies...")
+    for item in cookie_raw.split(';'):
+        if '=' in item:
+            try:
+                name, value = item.strip().split('=', 1)
+                driver.add_cookie({
+                    'name': name, 
+                    'value': value, 
+                    'domain': '.naukri.com', 
+                    'path': '/'
+                })
+            except Exception as e:
+                continue
+    time.sleep(2)
+
 def handle_questions(driver, job_idx):
-    """Auto-fills all pop-up questions."""
+    """Auto-fills pop-up questions using context matching."""
     try:
         time.sleep(5)
-        # 1. Fill Text Inputs
         inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='number'] | //textarea")
         for field in inputs:
             try:
@@ -30,16 +51,14 @@ def handle_questions(driver, job_idx):
                 elif "experience" in container_text: field.send_keys(MY_PROFILE_DATA["experience"])
             except: continue
 
-        # 2. Force click radio buttons
         radios = driver.find_elements(By.XPATH, "//input[@type='radio']")
         radio_names = set([r.get_attribute("name") for r in radios if r.get_attribute("name")])
         for name in radio_names:
             try:
                 btns = driver.find_elements(By.NAME, name)
-                if btns: driver.execute_script("arguments[0].click();", btns[0])
+                driver.execute_script("arguments[0].click();", btns[0])
             except: continue
 
-        # 3. Submit
         for path in ["//button[contains(text(), 'Submit')]", "//button[contains(text(), 'Save')]", "//button[text()='Apply']"]:
             btns = driver.find_elements(By.XPATH, path)
             for btn in btns:
@@ -49,47 +68,40 @@ def handle_questions(driver, job_idx):
     except: pass
 
 def run_automation():
-    print("🚀 Initializing Ultra-Stealth Mode...")
-    cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
+    print("🚀 Initializing Session-Guard Mode...")
     
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    
-    # We use a newer User-Agent to look like a modern Windows PC
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=chrome_options)
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", fix_hairline=True)
 
     try:
-        # Step 1: Handshake (Recruiter page is less guarded than home page)
+        # Step 1: Initial Login
         driver.get("https://www.naukri.com/recruiters-in-india") 
         time.sleep(5)
-        for item in cookie_raw.split(';'):
-            if '=' in item:
-                name, value = item.strip().split('=', 1)
-                driver.add_cookie({'name': name, 'value': value, 'domain': '.naukri.com', 'path': '/'})
+        inject_cookies(driver)
 
         # Step 2: Search with Access Denied Recovery
         search_url = "https://www.naukri.com/java-developer-jobs-in-india?experience=1&sort=f"
         driver.get(search_url)
         time.sleep(10)
         
-        # IF BLOCKED: Try a human-like refresh
-        if "access denied" in driver.page_source.lower() or "403" in driver.title:
-            print("⚠️ Access Denied detected. Retrying with stealth bypass...")
-            driver.delete_all_cookies() # Clear traces
+        # Check if blocked or logged out
+        if "access denied" in driver.page_source.lower() or "login" in driver.current_url.lower():
+            print("⚠️ Session lost or blocked. Re-initializing...")
+            driver.delete_all_cookies()
+            driver.get("https://www.naukri.com/recruiters-in-india")
             time.sleep(5)
-            driver.get("https://www.naukri.com/") # Go home first
-            time.sleep(5)
-            driver.get(search_url) # Return to search
+            inject_cookies(driver) # Re-inject cookies after clear
+            driver.get(search_url)
             time.sleep(15)
 
-        driver.execute_script("window.scrollTo(0, 1000);") # Scroll to trigger content
+        driver.execute_script("window.scrollTo(0, 1000);")
         driver.save_screenshot("search_page_debug.png")
 
         job_links = [el.get_attribute('href') for el in driver.find_elements(By.CSS_SELECTOR, "a.title") if el.get_attribute('href')]
@@ -99,14 +111,21 @@ def run_automation():
         for idx, link in enumerate(job_links[:10]):
             try:
                 driver.get(link)
-                time.sleep(random.uniform(10, 15)) # Slow, human-like speed
+                time.sleep(random.uniform(8, 12))
                 
+                # Verify we are still logged in on the job page
+                if "login" in driver.current_url.lower():
+                    print(f"🔄 Logged out on Job {idx+1}. Re-injecting...")
+                    inject_cookies(driver)
+                    driver.refresh()
+                    time.sleep(8)
+
                 apply_xpath = "//button[text()='Apply' or contains(text(), 'Apply')] | //span[text()='Apply']"
                 apply_btns = driver.find_elements(By.XPATH, apply_xpath)
                 
                 if apply_btns and apply_btns[0].is_displayed():
                     driver.execute_script("arguments[0].click();", apply_btns[0])
-                    print(f"✅ Applied to Job {idx+1}")
+                    print(f"✅ Job {idx+1}: Applied.")
                     handle_questions(driver, idx+1)
                     driver.save_screenshot(f"applied_job_{idx+1}.png")
                     applied += 1
