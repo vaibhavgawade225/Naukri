@@ -7,16 +7,24 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium_stealth import stealth
 
-# --- PROFILE DATA ---
+# --- YOUR UPDATED PROFILE DATA ---
 MY_PROFILE_DATA = {
-    "current_ctc": "3", "expected_ctc": "5", "notice_period": "15", "experience": "2"
+    "current_ctc": "3", 
+    "expected_ctc": "5", 
+    "notice_period": "15", 
+    "experience": "2",
+    "location_pref": "Yes" # For willingness questions
 }
 
 def handle_questionnaire(driver, job_idx):
-    """Positive-First logic: specifically looks for 'Yes' and fills missing gaps."""
+    """
+    Enhanced Logic:
+    1. Force 'Yes' for willingness/relocation questions.
+    2. Handles text, number, and dropdowns.
+    """
     try:
         time.sleep(5)
-        # 1. Radio Buttons: Priority for 'Yes'
+        # 1. Radio Buttons: Priority for 'Yes' / 'Willing' / 'Ready'
         radio_groups = {}
         for r in driver.find_elements(By.XPATH, "//input[@type='radio']"):
             name = r.get_attribute("name")
@@ -27,7 +35,6 @@ def handle_questionnaire(driver, job_idx):
         for name, buttons in radio_groups.items():
             selected = False
             for btn in buttons:
-                # Check label text, ID, and Value for "Yes"
                 btn_id = btn.get_attribute("id")
                 label_text = ""
                 try:
@@ -35,12 +42,15 @@ def handle_questionnaire(driver, job_idx):
                     if not label_text: label_text = btn.find_element(By.XPATH, "./..").text.lower()
                 except: pass
                 
-                if any(pos in label_text for pos in ["yes", "ready", "willing", "relocate", "agree"]):
+                # Check for "Yes" or preference keywords
+                if any(pos in label_text for pos in ["yes", "ready", "willing", "relocate", "agree", "comfortable"]):
                     driver.execute_script("arguments[0].click();", btn)
                     selected = True; break
-            if not selected: driver.execute_script("arguments[0].click();", buttons[0])
+            
+            if not selected: 
+                driver.execute_script("arguments[0].click();", buttons[0])
 
-        # 2. Text/Number Inputs: Multi-context search
+        # 2. Text/Number Inputs
         for field in driver.find_elements(By.XPATH, "//input[@type='text' or @type='number'] | //textarea"):
             ctx = (field.get_attribute("placeholder") or "").lower()
             try: ctx += " " + field.find_element(By.XPATH, "./ancestor::div[1]").text.lower()
@@ -50,7 +60,7 @@ def handle_questionnaire(driver, job_idx):
             elif "expected" in ctx and "ctc" in ctx: field.send_keys(MY_PROFILE_DATA["expected_ctc"])
             elif "notice" in ctx: field.send_keys(MY_PROFILE_DATA["notice_period"])
             elif "experience" in ctx or "years" in ctx: field.send_keys(MY_PROFILE_DATA["experience"])
-            elif not field.get_attribute("value"): field.send_keys("2") # Safety fallback
+            elif not field.get_attribute("value"): field.send_keys("2")
 
         # 3. Submit
         driver.save_screenshot(f"debug_quest_filled_{job_idx}.png")
@@ -63,7 +73,7 @@ def handle_questionnaire(driver, job_idx):
     except: return False
 
 def run_automation():
-    print("🚀 Starting Human-Flow Stealth Bot...")
+    print("🚀 Starting Latest Jobs Bot (Mumbai/Pune)...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     options = Options()
@@ -76,7 +86,7 @@ def run_automation():
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", fix_hairline=True)
 
     try:
-        # STEP 1: Land on Home & Inject
+        # STEP 1: Land and Inject Session
         driver.get("https://www.naukri.com/")
         time.sleep(5)
         for item in cookie_raw.split(';'):
@@ -86,45 +96,42 @@ def run_automation():
         driver.refresh()
         time.sleep(5)
 
-        # STEP 2: UI-Based Search (Beats the direct-link Firewall)
-        print("🔍 Searching via UI...")
-        try:
-            search_input = driver.find_element(By.CLASS_NAME, "suggestor-input")
-            search_input.send_keys("Java Developer")
-            search_input.send_keys(Keys.ENTER)
-        except:
-            # Fallback to direct search if UI fails, but with a referer
-            driver.get("https://www.naukri.com/java-developer-jobs-in-india?experience=1")
-            
+        # STEP 2: Navigate with exact Filtered URL (Beats External Job Spam)
+        # Parameters: Java Developer, Exp: 0,1,2, Locations: Mumbai, Pune, Sort: Freshness
+        search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f"
+        print(f"🔍 Navigating to: {search_url}")
+        driver.get(search_url)
         time.sleep(10)
         driver.save_screenshot("debug_01_search_results.png")
 
-        # STEP 3: Extract & Apply
+        # STEP 3: Extract & Filter for Direct Apply
         links = [el.get_attribute('href') for el in driver.find_elements(By.CSS_SELECTOR, "a.title") if el.get_attribute('href')]
-        print(f"Found {len(links)} jobs.")
+        print(f"Found {len(links)} potential jobs.")
 
         applied = 0
-        for idx, link in enumerate(links[:10]):
+        for idx, link in enumerate(links[:15]): # Check more to find internal ones
             try:
                 driver.get(link)
                 time.sleep(random.uniform(7, 10))
                 
-                # Check for "Access Denied" on job page
-                if "access denied" in driver.page_source.lower():
-                    print(f"⚠️ Job {idx+1} blocked. Skipping...")
+                # SKIP if it's an external website or requires registration
+                page_text = driver.page_source.lower()
+                if "apply on company site" in page_text or "register to apply" in page_text:
+                    print(f"⏭️ Skipping Job {idx+1}: External/Company site.")
                     continue
 
                 apply_btn = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(), 'Apply')]")
                 if apply_btn and apply_btn[0].is_displayed():
                     driver.execute_script("arguments[0].click();", apply_btn[0])
-                    print(f"✅ Applying to Job {idx+1}...")
+                    print(f"✅ Internal Apply found for Job {idx+1}. Filling questions...")
                     handle_questionnaire(driver, idx+1)
                     applied += 1
                 
                 if applied >= 5: break
-            except: continue
+            except Exception as e:
+                continue
 
-        print(f"🏁 Done. Total: {applied}")
+        print(f"🏁 Done. Successfully applied to {applied} internal jobs.")
     finally:
         driver.quit()
 
