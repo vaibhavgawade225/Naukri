@@ -16,21 +16,36 @@ MY_PROFILE_DATA = {
 }
 
 def handle_questions(driver):
-    """Auto-answers questions using first-option logic for unknown fields."""
+    """
+    Enhanced logic: Finds any input/select/radio and matches it to 
+    profile data by checking the text of the surrounding 'wrapper' div.
+    """
     try:
-        time.sleep(4)
-        # 1. Text Fields
-        inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='number'] | //textarea")
-        for field in inputs:
+        time.sleep(5) # Wait for popup
+        
+        # 1. Handle all text/number inputs
+        text_inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='number'] | //textarea")
+        for field in text_inputs:
             try:
-                context = (field.find_element(By.XPATH, "./..").text + " " + (field.get_attribute("placeholder") or "")).lower()
-                if "current ctc" in context: field.send_keys(MY_PROFILE_DATA["current_ctc"])
-                elif "expected ctc" in context: field.send_keys(MY_PROFILE_DATA["expected_ctc"])
-                elif "notice period" in context: field.send_keys(MY_PROFILE_DATA["notice_period"])
-                elif "experience" in context: field.send_keys(MY_PROFILE_DATA["experience"])
+                # Look at the text of the parent container to understand the question
+                container_text = field.find_element(By.XPATH, "./ancestor::div[1]").text.lower()
+                
+                if "current ctc" in container_text:
+                    field.clear()
+                    field.send_keys(MY_PROFILE_DATA["current_ctc"])
+                elif "expected ctc" in container_text:
+                    field.clear()
+                    field.send_keys(MY_PROFILE_DATA["expected_ctc"])
+                elif "notice period" in container_text:
+                    field.clear()
+                    field.send_keys(MY_PROFILE_DATA["notice_period"])
+                elif "experience" in container_text:
+                    field.clear()
+                    field.send_keys(MY_PROFILE_DATA["experience"])
             except: continue
 
-        # 2. Radio Groups (First Option/Relocation Logic)
+        # 2. Handle Radio Buttons & Checkboxes (Positive/First-Option Logic)
+        # We group radios by 'name' so we only click one per question
         radio_groups = {}
         for r in driver.find_elements(By.XPATH, "//input[@type='radio']"):
             name = r.get_attribute("name")
@@ -39,27 +54,43 @@ def handle_questions(driver):
 
         for name, buttons in radio_groups.items():
             try:
-                group_text = buttons[0].find_element(By.XPATH, "./../../..").text.lower()
-                if "reloc" in group_text:
+                group_context = buttons[0].find_element(By.XPATH, "./ancestor::div[contains(@class, 'question')]").text.lower()
+                if "reloc" in group_context:
                     for b in buttons:
                         if "yes" in b.get_attribute("value").lower() or "yes" in b.find_element(By.XPATH, "..").text.lower():
                             driver.execute_script("arguments[0].click();", b)
                             break
                 else:
+                    # Select the first option for any unknown random questions
                     driver.execute_script("arguments[0].click();", buttons[0])
-            except: continue
+            except: 
+                # Fallback: Just click the first one if context check fails
+                driver.execute_script("arguments[0].click();", buttons[0])
 
-        # 3. Submit
-        for s in ["//button[contains(text(), 'Submit')]", "//button[contains(text(), 'Save')]", "//button[contains(text(), 'Apply')]"]:
-            btn = driver.find_elements(By.XPATH, s)
-            if btn and btn[0].is_displayed():
-                driver.execute_script("arguments[0].click();", btn[0])
-                time.sleep(3)
-                break
-    except: pass
+        # 3. Aggressive Submit
+        # We try every possible 'Submit' flavor to ensure the form actually closes
+        submit_paths = [
+            "//button[contains(text(), 'Submit')]",
+            "//button[contains(text(), 'Save')]",
+            "//button[contains(text(), 'Apply and')]",
+            "//div[contains(@class, 'footer')]//button",
+            "//footer//button"
+        ]
+        
+        for path in submit_paths:
+            btns = driver.find_elements(By.XPATH, path)
+            for btn in btns:
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    print("🚀 Questionnaire Submit Clicked.")
+                    time.sleep(3)
+                    return True
+    except Exception as e:
+        print(f"⚠️ Handler error: {str(e)[:50]}")
+    return False
 
 def run_automation():
-    print("🚀 Initializing Ultra-Stealth Mode...")
+    print("🚀 Starting Brute-Force Question Handler...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     chrome_options = Options()
@@ -67,40 +98,25 @@ def run_automation():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    # Rotating User Agent slightly
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=chrome_options)
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", fix_hairline=True)
 
     try:
-        # STEP 1: Land on a non-search page first to "Warm Up" the session
-        print("🏠 Warming up on Home Page...")
+        # Step 1: Login
         driver.get("https://www.naukri.com/recruiters-in-india") 
-        time.sleep(random.uniform(5, 8))
-        
-        # Inject Cookies
+        time.sleep(random.uniform(5, 7))
         for item in cookie_raw.split(';'):
             if '=' in item:
                 name, value = item.strip().split('=', 1)
                 driver.add_cookie({'name': name, 'value': value, 'domain': '.naukri.com', 'path': '/'})
 
-        # STEP 2: Navigate to search with a "Human" Referrer
+        # Step 2: Search
         search_url = "https://www.naukri.com/java-developer-jobs?experience=0&experience=1&experience=2&sort=f"
-        print(f"🔍 Navigating to Search via indirect link...")
         driver.get(search_url)
-        
-        # Mandatory Human-Simulated Wait
-        time.sleep(random.uniform(15, 20))
-        driver.execute_script("window.scrollTo(0, 400);")
-        driver.save_screenshot("search_results_check.png")
+        time.sleep(15)
 
-        if "access denied" in driver.page_source.lower():
-            print("🚫 Firewall block still active. Attempting one hard refresh...")
-            driver.refresh()
-            time.sleep(15)
-
-        # STEP 3: Process Jobs
         job_links = [el.get_attribute('href') for el in driver.find_elements(By.CSS_SELECTOR, "a.title") if el.get_attribute('href')]
         print(f"Found {len(job_links)} jobs.")
 
@@ -108,25 +124,24 @@ def run_automation():
         for idx, link in enumerate(job_links[:15]):
             try:
                 driver.get(link)
-                time.sleep(random.uniform(10, 15))
+                time.sleep(random.uniform(8, 12))
                 
-                if "access denied" in driver.page_source.lower():
-                    print(f"⚠️ Job {idx+1} blocked. Skipping...")
-                    continue
-
-                apply_btn = driver.find_elements(By.XPATH, "//button[text()='Apply'] | //button[contains(text(), 'Apply')]")
-                if apply_btn and apply_btn[0].is_displayed():
-                    driver.execute_script("arguments[0].click();", apply_btn[0])
-                    print(f"✅ Clicked Apply on Job {idx+1}")
+                apply_btns = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(), 'Apply')]")
+                if apply_btns and apply_btns[0].is_displayed():
+                    driver.execute_script("arguments[0].click();", apply_btns[0])
+                    print(f"✅ Primary Apply for Job {idx+1}")
+                    
+                    # RUN BRUTE FORCE HANDLER
                     handle_questions(driver)
-                    driver.save_screenshot(f"job_{idx+1}_applied.png")
+                    
+                    driver.save_screenshot(f"verify_job_{idx+1}.png")
                     applied += 1
                 
                 if applied >= 5: break
-                time.sleep(random.uniform(5, 10))
+                time.sleep(random.uniform(3, 5))
             except: continue
 
-        print(f"🏁 Final Status: {applied} jobs applied.")
+        print(f"🏁 Final Status: {applied} jobs processed.")
 
     finally:
         driver.quit()
