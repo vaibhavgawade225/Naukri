@@ -2,13 +2,19 @@ name: Naukri Daily Automation
 
 on:
   schedule:
-    # ~4:21 AM IST (22:51 UTC) - 1.5 hours earlier than before
+    # ~4:21 AM IST (Current)
     - cron: '51 22 * * *'
     
-    # ~10:14 AM IST (04:44 UTC) - 1.5 hours earlier than before
+    # ~6:15 AM IST (New)
+    - cron: '45 0 * * *'
+    
+    # ~10:14 AM IST (Current)
     - cron: '44 4 * * *'
     
-    # ~3:26 PM IST (09:56 UTC) - 1.5 hours earlier than before
+    # ~12:00 PM IST (New)
+    - cron: '30 6 * * *'
+    
+    # ~3:26 PM IST (Current)
     - cron: '56 9 * * *'
   
   workflow_dispatch:
