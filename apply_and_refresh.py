@@ -109,7 +109,7 @@ def run_automation():
         print(f"Found {len(links)} potential jobs.")
 
         applied = 0
-        for idx, link in enumerate(links[:15]): # Check more to find internal ones
+        for idx, link in enumerate(links[:30]): # Check more to find internal ones
             try:
                 driver.get(link)
                 time.sleep(random.uniform(7, 10))
@@ -127,7 +127,7 @@ def run_automation():
                     handle_questionnaire(driver, idx+1)
                     applied += 1
                 
-                if applied >= 5: break
+                if applied >= 10: break
             except Exception as e:
                 continue
 
