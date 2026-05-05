@@ -4,8 +4,6 @@ import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
 from selenium_stealth import stealth
 
 # --- YOUR PROFILE DATA ---
@@ -16,134 +14,125 @@ MY_PROFILE_DATA = {
     "experience": "2"
 }
 
-def force_react_input(driver, field, value):
+def get_shadow_root(driver, element):
+    """Accesses elements hidden inside Shadow DOM."""
+    return driver.execute_script('return arguments[0].shadowRoot', element)
+
+def cdp_type(driver, element, text):
     """
-    PRO FIX: React ignores normal Selenium typing. 
-    This uses JavaScript to bypass React's synthetic event wrappers
-    and forces the Virtual DOM to recognize the input.
+    PRO TECH: Uses Chrome DevTools Protocol to insert text.
+    This bypasses React/Vue event listeners by simulating hardware-level input.
     """
     try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
-        time.sleep(0.5)
-        
-        # 1. The React DOM Injector
-        react_injector = """
-        let input = arguments[0];
-        let value = arguments[1];
-        let nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-        let nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-        
-        if (input.tagName === 'INPUT' && nativeInputValueSetter) {
-            nativeInputValueSetter.set.call(input, value);
-        } else if (input.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
-            nativeTextAreaValueSetter.set.call(input, value);
-        } else {
-            input.value = value;
-        }
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        """
-        driver.execute_script(react_injector, field, value)
-        
-        # 2. Fallback ActionChains (Physical Simulation)
-        ActionChains(driver).move_to_element(field).click().send_keys(Keys.END).send_keys(Keys.SPACE).send_keys(Keys.BACKSPACE).perform()
+        driver.execute_script("arguments[0].focus();", element)
+        time.sleep(0.2)
+        # Clear field first
+        driver.execute_script("arguments[0].value = '';", element)
+        # Hardware-level text insertion
+        driver.execute_cdp_cmd('Input.insertText', {'text': str(text)})
+        # Trigger validation events
+        driver.execute_script("""
+            arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+            arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+            arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+        """, element)
+        print(f"   [CDP] Successfully typed: {text}")
     except Exception as e:
-        print(f"   [!] Failed to inject text: {e}")
+        print(f"   [CDP Error] {e}")
+
+def find_all_inputs(driver):
+    """Finds all inputs, including those hidden in Shadow DOM."""
+    all_inputs = driver.find_elements(By.XPATH, "//input | //textarea | //select")
+    # Shadow DOM piercing (Experimental but powerful)
+    hosts = driver.find_elements(By.XPATH, "//*[contains(@class, 'naukri')]") # Common Naukri shadow hosts
+    for host in hosts:
+        try:
+            shadow = get_shadow_root(driver, host)
+            if shadow:
+                all_inputs.extend(shadow.find_elements(By.CSS_SELECTOR, "input, textarea, select"))
+        except: continue
+    return all_inputs
 
 def handle_questionnaire(driver, job_idx):
+    """Looping questionnaire handler using CDP tech."""
     try:
         for step in range(1, 6):
-            time.sleep(5)
+            time.sleep(6) # Wait for popup/next question
             driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_START.png")
-            
-            # --- 1. FILL TEXT BOXES ---
-            # Broadened XPath to catch hidden dynamic types like type="tel"
-            text_xpaths = "//input[not(@type='radio') and not(@type='checkbox') and not(@type='hidden') and not(@type='file') and not(@type='submit')] | //textarea"
-            text_inputs = driver.find_elements(By.XPATH, text_xpaths)
-            
-            for field in text_inputs:
+
+            # 1. FIND INPUTS (Piercing Shadow DOM if needed)
+            inputs = find_all_inputs(driver)
+            if not inputs:
+                print(f"   Step {step}: No inputs found. Checking if job is already applied...")
+                break
+
+            for field in inputs:
                 if not field.is_displayed(): continue
                 
-                # Safe Context Extraction (No silent breaking)
-                ctx = ""
-                try: ctx += str(field.get_attribute("placeholder") or "").lower()
-                except: pass
-                try: ctx += " " + str(field.get_attribute("name") or "").lower()
-                except: pass
-                try: ctx += " " + str(field.find_element(By.XPATH, "./..").text).lower()
-                except: pass
+                # Context identification
+                try:
+                    attr_text = f"{field.get_attribute('placeholder')} {field.get_attribute('name')} {field.get_attribute('id')}".lower()
+                    parent_text = driver.execute_script("return arguments[0].parentElement.innerText;", field).lower()
+                    ctx = attr_text + " " + parent_text
+                except: ctx = ""
 
-                # Determine Answer
-                val = "Yes" 
-                if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
-                elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
-                elif "experience" in ctx or "year" in ctx: val = MY_PROFILE_DATA["experience"]
+                # RADIO BUTTONS
+                if field.get_attribute("type") == "radio":
+                    if any(k in ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
+                        driver.execute_script("arguments[0].click();", field)
                 
-                print(f"   -> Found text field (context: '{ctx[:30]}...'). Injecting: {val}")
-                force_react_input(driver, field, val)
+                # TEXT / NUMBER FIELDS
+                elif field.tag_name in ["input", "textarea"]:
+                    val = "Yes" 
+                    if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
+                    elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
+                    elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
+                    elif "experience" in ctx: val = MY_PROFILE_DATA["experience"]
+                    cdp_type(driver, field, val)
 
-            # --- 2. FILL RADIO BUTTONS ---
-            radios = driver.find_elements(By.XPATH, "//input[@type='radio']")
-            radio_names = set([r.get_attribute('name') for r in radios if r.get_attribute('name')])
-            for name in radio_names:
-                group = driver.find_elements(By.XPATH, f"//input[@name='{name}']")
-                selected = False
-                for btn in group:
-                    try:
-                        lbl = btn.find_element(By.XPATH, "./ancestor::label | ./..").text.lower()
-                        if any(k in lbl for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
-                            driver.execute_script("arguments[0].click();", btn)
-                            selected = True; break
-                    except: pass
-                if not selected and group: 
-                    driver.execute_script("arguments[0].click();", group[0])
+                # SELECT DROPDOWNS
+                elif field.tag_name == "select":
+                    driver.execute_script("arguments[0].selectedIndex = 1; arguments[0].dispatchEvent(new Event('change'));", field)
 
-            # --- 3. FIND & CLICK SAVE ---
+            # 2. CLICK SAVE/SUBMIT (Ultra-broad search)
             save_button = None
-            button_selectors = [
+            selectors = [
                 "//button[contains(translate(., 'SAVE', 'save'), 'save')]",
                 "//button[contains(translate(., 'SUBMIT', 'submit'), 'submit')]",
                 "//button[contains(translate(., 'NEXT', 'next'), 'next')]",
-                "//button[contains(@class, 'save')]",
-                "//div[contains(@class, 'footer')]//button"
+                "//div[contains(@class, 'footer')]//button",
+                "//button[@type='submit']"
             ]
-            
-            for xpath in button_selectors:
-                btns = driver.find_elements(By.XPATH, xpath)
+            for sel in selectors:
+                btns = driver.find_elements(By.XPATH, sel)
                 for b in btns:
-                    if b.is_displayed():
-                        save_button = b; break
+                    if b.is_displayed(): save_button = b; break
                 if save_button: break
 
-            if not save_button:
-                print(f"✅ Job {job_idx}: Form finished or no extra questions at Step {step}.")
+            if save_button:
+                driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_READY.png")
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", save_button)
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", save_button)
+                print(f"🚀 Job {job_idx}: Step {step} Submitted.")
+            else:
+                print(f"✅ Job {job_idx}: Application likely complete.")
                 break
-
-            driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_FILLED.png")
-            
-            # Click the Save button securely using JS
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", save_button)
-            time.sleep(1)
-            driver.execute_script("arguments[0].click();", save_button)
-            print(f"🚀 Job {job_idx}: Clicked Save for Step {step}")
-            time.sleep(4)
 
         return True
     except Exception as e:
-        print(f"❌ Critical Error in Questionnaire: {e}")
+        print(f"❌ Critical Error: {e}")
         return False
 
 def run_automation():
-    print("🚀 Starting Pro-Level React-Injector Bot...")
+    print("🚀 Starting Advanced CDP-Based Bot...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=options)
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", fix_hairline=True)
@@ -158,34 +147,31 @@ def run_automation():
         driver.refresh()
         time.sleep(5)
 
-        search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f"
-        driver.get(search_url)
+        driver.get("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f")
         time.sleep(10)
 
         links = [el.get_attribute('href') for el in driver.find_elements(By.CSS_SELECTOR, "a.title") if el.get_attribute('href')]
-        print(f"Found {len(links)} potential jobs.")
+        print(f"Found {len(links)} jobs.")
 
         applied = 0
-        for idx, link in enumerate(links[:20]):
+        for idx, link in enumerate(links[:15]):
             try:
                 driver.get(link)
                 time.sleep(random.uniform(7, 10))
                 
-                if "already applied" in driver.page_source.lower():
-                    continue
+                if "already applied" in driver.page_source.lower(): continue
 
                 apply_btns = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(), 'Apply')]")
                 if apply_btns and apply_btns[0].is_displayed():
                     driver.execute_script("arguments[0].click();", apply_btns[0])
-                    print(f"✅ Starting Apply Process for Job {idx+1}...")
+                    print(f"✅ Applying to Job {idx+1}")
                     handle_questionnaire(driver, idx+1)
                     applied += 1
                 
-                # Kept to 5 for fast testing
                 if applied >= 5: break 
             except: continue
 
-        print(f"🏁 Total Successful Cycles: {applied}")
+        print(f"🏁 Final Applied Count: {applied}")
     finally:
         driver.quit()
 
