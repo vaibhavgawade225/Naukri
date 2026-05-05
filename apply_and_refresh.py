@@ -1,7 +1,6 @@
 import os
 import time
 import random
-import glob
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -13,63 +12,93 @@ MY_PROFILE_DATA = {
 }
 
 def handle_questionnaire(driver, job_idx):
-    """Answers questions and takes a final confirmation screenshot."""
+    """
+    Handles multi-step questionnaires. 
+    Answers 'Yes' to text-based willingness questions.
+    """
     try:
-        time.sleep(5) 
-        # 1. Fill Radio/Text/Dropdowns (Logic remains same)
-        radio_groups = {}
-        for r in driver.find_elements(By.XPATH, "//input[@type='radio']"):
-            name = r.get_attribute("name")
-            if name:
-                if name not in radio_groups: radio_groups[name] = []
-                radio_groups[name].append(r)
+        # Loop up to 6 times to handle multiple consecutive questions
+        for step in range(1, 7):
+            time.sleep(4) 
+            
+            # 1. Identify the 'Save' or 'Submit' button for this step
+            save_button = None
+            for xpath in ["//button[text()='Save']", "//button[contains(text(), 'Save')]", "//button[contains(text(), 'Submit')]"]:
+                btns = driver.find_elements(By.XPATH, xpath)
+                for b in btns:
+                    if b.is_displayed():
+                        save_button = b; break
+                if save_button: break
 
-        for name, buttons in radio_groups.items():
-            selected = False
-            for btn in buttons:
-                btn_id = btn.get_attribute("id")
-                label_text = ""
+            if not save_button:
+                print(f"✅ Job {job_idx}: No more questions found.")
+                break
+
+            # 📸 Debug: What does the bot see at this step?
+            driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_START.png")
+
+            # 2. Handle Text Boxes / Textareas (Specifically for 'Yes' type answers)
+            inputs = driver.find_elements(By.XPATH, "//input[@type='text' or @type='number'] | //textarea")
+            for field in inputs:
                 try:
-                    if btn_id: label_text = driver.find_element(By.XPATH, f"//label[@for='{btn_id}']").text.lower()
-                    if not label_text: label_text = btn.find_element(By.XPATH, "./..").text.lower()
-                except: pass
-                if any(pos in label_text for pos in ["yes", "ready", "willing", "relocate", "agree"]):
-                    driver.execute_script("arguments[0].click();", btn)
-                    selected = True; break
-            if not selected: driver.execute_script("arguments[0].click();", buttons[0])
+                    # Get context from placeholder or parent text
+                    ctx = (field.get_attribute("placeholder") or "").lower()
+                    try:
+                        ctx += " " + field.find_element(By.XPATH, "./ancestor::div[1]").text.lower()
+                    except: pass
 
-        for field in driver.find_elements(By.XPATH, "//input[@type='text' or @type='number'] | //textarea"):
-            ctx = (field.get_attribute("placeholder") or "").lower()
-            try: ctx += " " + field.find_element(By.XPATH, "./ancestor::div[1]").text.lower()
-            except: pass
-            if "current" in ctx and "ctc" in ctx: field.send_keys(MY_PROFILE_DATA["current_ctc"])
-            elif "expected" in ctx and "ctc" in ctx: field.send_keys(MY_PROFILE_DATA["expected_ctc"])
-            elif "notice" in ctx: field.send_keys(MY_PROFILE_DATA["notice_period"])
-            elif "experience" in ctx or "years" in ctx: field.send_keys(MY_PROFILE_DATA["experience"])
-            elif not field.get_attribute("value"): field.send_keys("2")
+                    if "current" in ctx and "ctc" in ctx:
+                        field.send_keys(MY_PROFILE_DATA["current_ctc"])
+                    elif "expected" in ctx and "ctc" in ctx:
+                        field.send_keys(MY_PROFILE_DATA["expected_ctc"])
+                    elif "notice" in ctx:
+                        field.send_keys(MY_PROFILE_DATA["notice_period"])
+                    elif "experience" in ctx or "years" in ctx:
+                        field.send_keys(MY_PROFILE_DATA["experience"])
+                    # --- NEW FIX FOR JOB 8 ---
+                    elif any(word in ctx for word in ["willing", "relocate", "yes", "message", "type"]):
+                        field.send_keys("Yes")
+                    else:
+                        # Safety fallback for other text fields
+                        if not field.get_attribute("value"):
+                            field.send_keys("Yes")
+                except: continue
 
-        # 2. Aggressive Submit
-        submit_clicked = False
-        for btn_text in ["Submit", "Save", "Apply"]:
-            btns = driver.find_elements(By.XPATH, f"//button[contains(text(), '{btn_text}')] | //span[text()='{btn_text}']/..")
-            for b in btns:
-                if b.is_displayed():
-                    driver.execute_script("arguments[0].click();", b)
-                    submit_clicked = True
-                    break
-            if submit_clicked: break
+            # 3. Handle Radio Buttons (Standard Priority)
+            radio_groups = {}
+            for r in driver.find_elements(By.XPATH, "//input[@type='radio']"):
+                name = r.get_attribute("name")
+                if name:
+                    if name not in radio_groups: radio_groups[name] = []
+                    radio_groups[name].append(r)
 
-        # 3. 📸 CRITICAL: Wait and take the 'Success' screenshot
-        if submit_clicked:
-            print(f"✅ Clicked Submit for Job {job_idx}. Waiting for confirmation...")
-            time.sleep(6) # Give the site time to process the apply
-            driver.save_screenshot(f"JOB_{job_idx}_POST_APPLY_CONFIRMATION.png")
-            return True
-    except: 
+            for name, buttons in radio_groups.items():
+                selected = False
+                for btn in buttons:
+                    try:
+                        text = btn.find_element(By.XPATH, "./ancestor::label | ./..").text.lower()
+                        if any(pos in text for pos in ["15", "immediate", "yes", "willing", "relocate"]):
+                            driver.execute_script("arguments[0].click();", btn)
+                            selected = True; break
+                    except: pass
+                if not selected:
+                    driver.execute_script("arguments[0].click();", buttons[0])
+
+            # 📸 Debug: Show filled state
+            driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_FILLED.png")
+
+            # 4. Click Save and Wait
+            driver.execute_script("arguments[0].click();", save_button)
+            print(f"🚀 Job {job_idx}: Clicked Save for step {step}")
+            time.sleep(4)
+
+        return True
+    except Exception as e:
+        print(f"⚠️ Error handling questionnaire: {e}")
         return False
 
 def run_automation():
-    print("🚀 Starting Latest Jobs Bot (Mumbai/Pune)...")
+    print("🚀 Starting Latest Jobs Bot with Multi-Step Logic...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     options = Options()
@@ -82,6 +111,7 @@ def run_automation():
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", fix_hairline=True)
 
     try:
+        # Establish session
         driver.get("https://www.naukri.com/")
         time.sleep(5)
         for item in cookie_raw.split(';'):
@@ -91,12 +121,13 @@ def run_automation():
         driver.refresh()
         time.sleep(5)
 
+        # Search Query (Mumbai/Pune, Latest, 0-2 yrs)
         search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f"
         driver.get(search_url)
         time.sleep(10)
 
         links = [el.get_attribute('href') for el in driver.find_elements(By.CSS_SELECTOR, "a.title") if el.get_attribute('href')]
-        print(f"Found {len(links)} potential jobs.")
+        print(f"Found {len(links)} jobs.")
 
         applied = 0
         for idx, link in enumerate(links[:40]):
@@ -104,27 +135,22 @@ def run_automation():
                 driver.get(link)
                 time.sleep(random.uniform(7, 10))
                 
-                # Check for "Already Applied" to avoid wasting time
-                if "already applied" in driver.page_source.lower():
-                    print(f"⏭️ Skipping Job {idx+1}: Already Applied.")
+                # Check for "Already Applied" or "External Site"
+                page_source = driver.page_source.lower()
+                if "already applied" in page_source or "apply on company site" in page_source:
                     continue
 
-                apply_btn = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(), 'Apply')]")
-                if apply_btn and apply_btn[0].is_displayed():
-                    driver.execute_script("arguments[0].click();", apply_btn[0])
-                    print(f"✅ Internal Apply found for Job {idx+1}. Filling questions...")
-                    
-                    # Handle questionnaire AND take final screenshot
+                apply_btns = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(), 'Apply')]")
+                if apply_btns and apply_btns[0].is_displayed():
+                    driver.execute_script("arguments[0].click();", apply_btns[0])
+                    print(f"✅ Applying to Job {idx+1}...")
                     handle_questionnaire(driver, idx+1)
-                    
-                    # Also take a screenshot of the main page just in case there was no questionnaire
-                    driver.save_screenshot(f"JOB_{idx+1}_MAIN_PAGE_FINAL.png")
                     applied += 1
                 
                 if applied >= 10: break
             except: continue
 
-        print(f"🏁 Done. Total: {applied}")
+        print(f"🏁 Final Apply Count: {applied}")
     finally:
         driver.quit()
 
