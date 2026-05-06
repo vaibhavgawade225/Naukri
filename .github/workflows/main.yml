@@ -2,19 +2,15 @@ name: Naukri Daily Automation
 
 on:
   schedule:
-    # ~4:21 AM IST (Current)
+    # ~4:21 AM IST
     - cron: '51 22 * * *'
-    
-    # ~6:15 AM IST (New)
+    # ~6:15 AM IST
     - cron: '45 0 * * *'
-    
-    # ~10:14 AM IST (Current)
+    # ~10:14 AM IST
     - cron: '44 4 * * *'
-    
-    # ~12:00 PM IST (New)
+    # ~12:00 PM IST
     - cron: '30 6 * * *'
-    
-    # ~3:26 PM IST (Current)
+    # ~3:26 PM IST
     - cron: '56 9 * * *'
   
   workflow_dispatch:
@@ -23,25 +19,32 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install chromium
+          # Install Playwright browsers AND the required system Linux dependencies
+          pip install playwright
+          playwright install chromium --with-deps
+
       - name: Execute Script
         env:
+          # Make sure NAUKRI_COOKIE is set in your GitHub Repo Secrets
           NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
         run: python apply_and_refresh.py
       
-      # THIS SECTION ADDS THE SCREENSHOTS
       - name: Upload Debug Screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: naukri-apply-debug
-          path: ./*.png  # Added ./ to ensure it looks in the current directory
+          path: ./*.png
+          retention-days: 3  # Keeps the logs clean
