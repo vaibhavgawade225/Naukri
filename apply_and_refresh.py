@@ -4,6 +4,7 @@ import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium_stealth import stealth
 
 # --- YOUR PROFILE DATA ---
@@ -14,85 +15,99 @@ MY_PROFILE_DATA = {
     "experience": "2"
 }
 
-def force_react_input(driver, element, value):
-    """Bypasses React's synthetic events to force text into the box."""
-    js_injector = """
-    let input = arguments[0];
-    let value = arguments[1];
-    let nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-    let nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-    
-    if (input.tagName === 'INPUT' && nativeInputValueSetter) {
-        nativeInputValueSetter.set.call(input, value);
-    } else if (input.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
-        nativeTextAreaValueSetter.set.call(input, value);
-    } else {
-        input.value = value;
-    }
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new Event('blur', { bubbles: true }));
-    """
-    driver.execute_script(js_injector, element, value)
-
 def process_inputs_and_save(driver):
-    """Finds inputs in the current frame, fills them, and clicks save."""
+    """Finds inputs, forces focus, and types like a physical keyboard."""
     found_inputs = False
     clicked_save = False
 
     try:
-        # 1. Fill Inputs
-        inputs = driver.find_elements(By.XPATH, "//input[not(@type='hidden')] | //textarea | //select")
+        # 1. Broad search: Inputs, Textareas, Selects, and Content-Editable Divs
+        inputs = driver.find_elements(By.XPATH, "//input | //textarea | //select | //*[@contenteditable='true']")
+        
         for field in inputs:
-            if not field.is_displayed(): continue
-            
+            try:
+                field_type = field.get_attribute("type")
+                if field_type in ["hidden", "submit", "button", "file"]:
+                    continue # Ignore background code elements
+                    
+                # Get surrounding text to understand the question
+                html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
+            except: 
+                continue # Skip if element goes stale
+                
             found_inputs = True
-            # Get text around the field to figure out the question
-            html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
             
-            field_type = field.get_attribute("type")
+            # --- RADIO & CHECKBOXES ---
             if field_type in ["radio", "checkbox"]:
                 if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
-                    driver.execute_script("arguments[0].click();", field)
+                    # PRO FIX: Click the hidden input AND its visual wrapper to trigger the React state
+                    driver.execute_script("arguments[0].click(); if(arguments[0].parentElement) arguments[0].parentElement.click();", field)
+                    time.sleep(0.2)
             
-            elif field.tag_name in ["input", "textarea"]:
-                val = "Yes" # Default fallback
+            # --- SELECT DROPDOWNS ---
+            elif field.tag_name == "select":
+                driver.execute_script("arguments[0].selectedIndex = 1; arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
+
+            # --- TEXT & NUMBER FIELDS ---
+            elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
+                val = "Yes"
                 if "current" in html_ctx and "ctc" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
                 elif "expected" in html_ctx and "ctc" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
                 elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
                 elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
                 
-                force_react_input(driver, field, val)
+                try:
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
+                    time.sleep(0.5)
+                    
+                    # PRO FIX: 1. Force Focus and Clear via JavaScript
+                    driver.execute_script("arguments[0].focus(); arguments[0].value = '';", field)
+                    time.sleep(0.2)
+                    
+                    # PRO FIX: 2. Hardware-Level Typing via ActionChains
+                    ActionChains(driver).send_keys(str(val)).perform()
+                    
+                    # PRO FIX: 3. Dispatch manual events so the "Save" button wakes up
+                    driver.execute_script("""
+                        arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                        arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                        arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+                    """, field)
+                    time.sleep(0.5)
+                except: pass
 
-        # 2. Click Save/Submit
+        # 2. Click Save/Submit/Next/Apply
         buttons = driver.find_elements(By.XPATH, "//button")
         for btn in buttons:
-            if not btn.is_displayed(): continue
-            btn_text = btn.text.lower()
-            if any(word in btn_text for word in ["save", "submit", "next", "apply"]):
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-                time.sleep(0.5)
-                driver.execute_script("arguments[0].click();", btn)
-                clicked_save = True
-                print("   🚀 Clicked Submit/Save button.")
-                break
-                
+            try:
+                if not btn.is_displayed(): continue
+                btn_text = btn.text.lower()
+                if any(word in btn_text for word in ["save", "submit", "next", "apply"]):
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                    time.sleep(1)
+                    # Click via JS bypasses pop-up blockers
+                    driver.execute_script("arguments[0].click();", btn)
+                    clicked_save = True
+                    print("   🚀 Clicked Submit/Next button.")
+                    break
+            except: continue
+
     except Exception as e:
-        pass # Ignore StaleElement errors while searching
+        pass 
 
     return found_inputs, clicked_save
 
 def handle_questionnaire(driver, job_idx):
-    """Checks the main page, then deeply checks all iframes."""
+    """Checks main page, then deep-dives into all iframes."""
     for step in range(1, 6):
-        time.sleep(5)
+        time.sleep(6)
         driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_START.png")
         
-        # 1. Try Main Page First
+        # 1. Check Main Window
         driver.switch_to.default_content()
         found, clicked = process_inputs_and_save(driver)
 
-        # 2. If nothing found, deeply search all iframes (Chatbots/Popups)
+        # 2. If nothing found, check every Iframe (Chatbot Apply Boxes)
         if not found and not clicked:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for frame in iframes:
@@ -100,12 +115,13 @@ def handle_questionnaire(driver, job_idx):
                     driver.switch_to.frame(frame)
                     f_found, f_clicked = process_inputs_and_save(driver)
                     if f_found or f_clicked:
-                        found = found or f_found
-                        clicked = clicked or f_clicked
-                        break # Found the active frame
+                        found, clicked = True, True
+                        break
                 except: pass
                 finally:
                     driver.switch_to.default_content()
+
+        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_END.png")
 
         if not found and not clicked:
             print(f"   ✅ Job {job_idx}: Form finished or no inputs found at Step {step}.")
@@ -114,7 +130,7 @@ def handle_questionnaire(driver, job_idx):
         time.sleep(3)
 
 def run_automation():
-    print("🚀 Starting Selenium Stealth + Iframe Injector Bot...")
+    print("🚀 Starting Selenium ActionChains Pro Bot...")
     cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
     
     options = Options()
@@ -125,7 +141,6 @@ def run_automation():
     
     driver = webdriver.Chrome(options=options)
     
-    # This is the magic that bypasses Cloudflare Access Denied
     stealth(driver,
         languages=["en-US", "en"],
         vendor="Google Inc.",
@@ -150,9 +165,7 @@ def run_automation():
         driver.get(search_url)
         time.sleep(8)
         
-        driver.save_screenshot("SEARCH_RESULTS.png")
-
-        # Robust Link Scraper (Avoids empty arrays)
+        # Scrape Job Links
         job_links = []
         links = driver.find_elements(By.XPATH, "//a[contains(@href, 'job-listings-')]")
         for link in links:
