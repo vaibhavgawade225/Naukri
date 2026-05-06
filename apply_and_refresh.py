@@ -17,76 +17,68 @@ MY_PROFILE_DATA = {
 
 def process_single_step(driver):
     """
-    Specifically designed for the Naukri Chatbot seen in your 'Saved Jobs' screenshot.
+    Refined for Neo-AI Chatbot: Fills the active question, 
+    verifies the Save button is enabled, and clicks it.
     """
     try:
-        found_anything = False
-        
-        # 1. Look for the Chatbot Container
-        # Naukri uses 'chatbot_main' for this floating window
-        chatbot_container = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')] | //div[@id='chatbot_main']")
-        
-        # 2. Fill Textbox (Targeting the 'For example' placeholder from your screenshot)
-        inputs = driver.find_elements(By.XPATH, "//input | //textarea")
-        for field in inputs:
+        # 1. HANDLE TEXT INPUTS (Industry Experience / CTC)
+        # We target the specific 'For example' placeholder seen in your screen
+        text_fields = driver.find_elements(By.XPATH, "//input[not(@type='radio')] | //textarea")
+        for field in text_fields:
+            if not field.is_displayed(): continue
             placeholder = (field.get_attribute("placeholder") or "").lower()
-            html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
             
-            # Match based on the specific Chatbot prompts
-            if any(k in placeholder or k in html_ctx for k in ["experience", "years", "example", "ctc", "notice", "location"]):
-                val = MY_PROFILE_DATA["experience"] # Default
-                if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
-                elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
+            # Logic to decide what to type
+            val = MY_PROFILE_DATA["experience"]
+            if "current" in placeholder: val = MY_PROFILE_DATA["current_ctc"]
+            elif "expected" in placeholder: val = MY_PROFILE_DATA["expected_ctc"]
 
-                driver.execute_script("""
-                    arguments[0].style.border='3px solid blue';
-                    arguments[0].focus();
-                    arguments[0].value = arguments[1];
-                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-                    arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
-                """, field, str(val))
-                found_anything = True
+            driver.execute_script("""
+                arguments[0].focus();
+                arguments[0].value = arguments[1];
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+            """, field, str(val))
+            time.sleep(0.5)
 
-        # 3. Handle Radio Buttons (Yes/No/Notice Period options)
-        labels = driver.find_elements(By.XPATH, "//label | //span[contains(@class, 'text')] | //div[contains(@class, 'radio')]")
-        for label in labels:
-            txt = label.text.strip().lower()
-            if txt and any(k == txt or f" {k} " in f" {txt} " for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
-                driver.execute_script("arguments[0].style.border='3px solid red'; arguments[0].click();", label)
-                found_anything = True
+        # 2. HANDLE RADIO BUTTONS (Yes/No/Interview Willingness)
+        # We click the label text directly to ensure React registers the 'Check'
+        choices = driver.find_elements(By.XPATH, "//label | //span[contains(@class, 'label')] | //div[contains(@class, 'radio')]")
+        for opt in choices:
+            if not opt.is_displayed(): continue
+            txt = opt.text.strip().lower()
+            if any(k == txt or k in txt for k in ["yes", "15", "immediate", "willing", "agree"]):
+                driver.execute_script("arguments[0].click();", opt)
+                print(f"   🔘 Selected: {txt}")
+                time.sleep(0.8) # Wait for 'Save' button to transition from disabled to enabled
 
-        # 4. CLICK THE CHATBOT 'SAVE' BUTTON (The Big Blue Button)
-        time.sleep(1.5)
-        # Targeted XPATH for the button at the bottom of the chat window
-        save_buttons = driver.find_elements(By.XPATH, """
-            //div[contains(@class, 'chatbot')]//button[contains(text(), 'Save')] | 
-            //div[contains(@class, 'chatbot')]//button[contains(text(), 'Next')] |
-            //button[contains(@class, 'saveBtn')] |
-            //div[@id='chatbot_main']//button
-        """)
-
-        for btn in save_buttons:
-            try:
-                # Ensure we only click the one that is visible and in the foreground
-                if btn.is_displayed() and btn.size['width'] > 0:
-                    btn_text = btn.text.strip().lower()
-                    if any(word in btn_text for word in ["save", "next", "continue", "submit"]):
-                        print(f"   🚀 Clicking Chatbot Button: {btn.text}")
-                        driver.execute_script("""
-                            arguments[0].style.border='5px solid green';
-                            arguments[0].removeAttribute('disabled');
-                            arguments[0].click();
-                        """, btn)
-                        return True # Exit step successfully
-            except: continue
-                
-    except Exception as e:
-        print(f"   [!] Chatbot Step Error: {e}")
+        # 3. THE SAVE BUTTON (The Blue Floating Button)
+        # Search specifically for the button that is NOT part of the background JD
+        save_btns = driver.find_elements(By.XPATH, "//button[text()='Save' or text()='Next' or contains(@class, 'save')]")
         
-    return False
+        for btn in save_btns:
+            # We use JS to check if the button is inside the chatbot window and not the JD header
+            is_valid = driver.execute_script("""
+                let el = arguments[0];
+                let isChat = !!el.closest('.chatbot_main') || !!el.closest('[class*="chatbot"]');
+                let isHeader = !!el.closest('.jd-header');
+                return isChat && !isHeader && el.offsetHeight > 0;
+            """, btn)
 
+            if is_valid:
+                print(f"   🚀 Clicking Enabled Save Button")
+                driver.execute_script("""
+                    arguments[0].style.border='5px solid green';
+                    arguments[0].removeAttribute('disabled');
+                    arguments[0].click();
+                """, btn)
+                return True # Successfully completed this sub-step
+
+    except Exception as e:
+        print(f"   [!] Error during chatbot step: {e}")
+    
+    return False
 def handle_questionnaire(driver, job_idx):
     for step in range(1, 11):
         time.sleep(4)
