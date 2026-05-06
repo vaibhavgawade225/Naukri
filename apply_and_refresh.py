@@ -1,177 +1,146 @@
 import os
 import time
-import random
+import csv
+import json
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium_stealth import stealth
+from selenium_stealth import stealth # Ensure you have pip install selenium-stealth
+from gemini_api import bard_flash_response
 
-# --- YOUR PROFILE DATA ---
-MY_PROFILE_DATA = {
-    "current_ctc": "3", 
-    "expected_ctc": "5", 
-    "notice_period": "15", 
-    "experience": "2"
-}
+# --- CONFIGURATION ---
+RUNNING_IN_GITHUB = os.environ.get('GITHUB_ACTIONS') == 'true'
 
-def process_single_step(driver):
-    """
-    Specifically targets the inner 'sendMsg' div within the chatbot container.
-    """
-    try:
-        # 1. Fill Textbox / Select Radio
-        # (Assuming the answering logic from previous steps is working)
-        active_inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//input")
-        for field in active_inputs:
-            if field.is_displayed():
-                val = MY_PROFILE_DATA["experience"]
-                driver.execute_script("arguments[0].value = arguments[1];", field, str(val))
-                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
-        
-        time.sleep(1) # Wait for the Save button to become active
+options = Options()
+if RUNNING_IN_GITHUB:
+    options.add_argument("--headless")
+    # For GitHub Actions, we use the default environment driver
+    driver = webdriver.Firefox(options=options)
+else:
+    # LOCAL PATHS
+    driver_path = "Specify your geckodriver path" 
+    options.binary_location = "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
+    service = Service(driver_path)
+    driver = webdriver.Firefox(service=service, options=options)
 
-        # 2. THE SAVE BUTTON FIX
-        # We target the specific inner div you provided: <div class="sendMsg">Save</div>
-        # We use a path that finds the 'sendMsg' class inside the 'send' container.
-        save_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'send')]//div[contains(@class, 'sendMsg')]")
-        
-        for el in save_elements:
-            if el.text.strip() == "Save":
-                print(f"   🚀 Found inner Save div. Triggering Deep Click...")
-                
-                # Visual Debug
-                driver.execute_script("arguments[0].style.border='5px solid green';", el)
-                
-                # We click the inner element and then the outer one just to be safe
-                driver.execute_script("""
-                    let inner = arguments[0];
-                    let outer = inner.parentElement;
-                    
-                    // Remove any 'disabled' classes from both
-                    inner.classList.remove('disabled');
-                    if(outer) outer.classList.remove('disabled');
-                    
-                    // Trigger the click on the interactive element
-                    inner.click();
-                    
-                    // Dispatch 'Enter' key event as a backup (common for chatbots)
-                    inner.dispatchEvent(new KeyboardEvent('keydown', {'key': 'Enter'}));
-                """, el)
-                
-                return True
+# --- APPLY STEALTH ---
+stealth(driver,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True)
 
-    except Exception as e:
-        print(f"   [!] Interaction error: {e}")
+wait = WebDriverWait(driver, 10)
+csv_file = "jobs.csv"
+applied_count = 0
+
+def inject_cookies():
+    """Injects cookies to bypass login. Uses 'NAUKRI_COOKIES' secret in GitHub."""
+    driver.get("https://www.naukri.com/")
+    time.sleep(2)
     
-    return False    
-def handle_questionnaire(driver, job_idx):
-    """
-    Sequence: 
-    1. Wait for chatbot to load after Apply is clicked.
-    2. Loop: Fill one answer -> Click the specific 'Save' div.
-    """
-    print(f"   ⏳ Job {job_idx}: Waiting for chatbot/questionnaire to initialize...")
-    time.sleep(5) # Give the chatbot time to slide in after the Apply click
-    
-    for step in range(1, 15): # Support up to 15 questions
-        driver.switch_to.default_content()
-        
-        # Take a screenshot BEFORE interacting to see the question
-        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_BEFORE.png")
-        
-        # Try to process the step (Fill Answer + Click the 'Save' div)
-        success = process_single_step(driver)
-        
-        # If not found in main content, check iframes (rare for chatbot but safe to keep)
-        if not success:
-            iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            for frame in iframes:
-                try:
-                    driver.switch_to.frame(frame)
-                    if process_single_step(driver):
-                        success = True
-                        break
-                except:
-                    pass
-                finally:
-                    driver.switch_to.default_content()
-        
-        # Take a screenshot AFTER to verify the click/fill
-        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_AFTER.png")
-        
-        if success:
-            print(f"   ✅ Step {step}: Answered and Clicked Save.")
-            time.sleep(3.5) # Wait for the next chatbot message to appear
-        else:
-            # If process_single_step returns False, it means no 'Save' button was found.
-            # This usually means the application is finished.
-            print(f"   🏁 Step {step}: No 'Save' button detected. Questionnaire likely finished.")
-            break
-
-def run_automation():
-    print("🚀 Starting Selenium Full Script...")
-    cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
-    
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    
-    driver = webdriver.Chrome(options=options)
-    stealth(driver, 
-            languages=["en-US", "en"], 
-            vendor="Google Inc.", 
-            platform="Win32", 
-            webgl_vendor="Intel Inc.", 
-            renderer="Intel Iris OpenGL Engine", 
-            fix_hairline=True)
-
-    try:
-        driver.get("https://www.naukri.com/")
-        if cookie_raw:
-            for item in cookie_raw.split(';'):
-                if '=' in item:
-                    n, v = item.strip().split('=', 1)
-                    driver.add_cookie({'name': n.strip(), 'value': v.strip(), 'domain': '.naukri.com', 'path': '/'})
-            driver.refresh()
-            time.sleep(5)
-
-        driver.get("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f")
-        time.sleep(8)
-        
-        job_links = []
-        links = driver.find_elements(By.XPATH, "//a[contains(@href, 'job-listings-')]")
-        for link in links:
-            href = link.get_attribute('href')
-            if href and href not in job_links:
-                job_links.append(href)
-
-        print(f"Found {len(job_links)} jobs.")
-
-        applied = 0
-        for idx, link in enumerate(job_links[:10]):
+    # Expects cookies in JSON format: [{"name": "...", "value": "..."}, ...]
+    cookies_raw = os.environ.get('NAUKRI_COOKIES')
+    if cookies_raw:
+        cookies = json.loads(cookies_raw)
+        for cookie in cookies:
             try:
-                driver.get(link)
-                time.sleep(7)
+                driver.add_cookie(cookie)
+            except Exception as e:
+                print(f"Error adding cookie: {e}")
+        driver.refresh()
+        print("🍪 Cookies injected and session refreshed.")
+
+def capture_result(name, job_url):
+    """Captures a screenshot for success or failure."""
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    clean_url = job_url.split('/')[-1][:20]
+    filename = f"{name}_{clean_url}_{timestamp}.png"
+    driver.save_screenshot(filename)
+    print(f"📸 Screenshot saved: {filename}")
+
+def force_save_click():
+    """Human-like click on the sendMsg div you identified."""
+    try:
+        # Targeting the specific div you inspected: <div class="sendMsg">Save</div>
+        save_btn = wait.until(EC.presence_of_element_located(
+            (By.XPATH, "//div[contains(@class, 'sendMsg') and text()='Save']")
+        ))
+        
+        driver.execute_script("""
+            let target = arguments[0];
+            let wrapper = target.closest('.send') || target.parentElement;
+            if (wrapper) wrapper.classList.remove('disabled');
+            target.classList.remove('disabled');
+
+            ['mousedown', 'mouseup', 'click'].forEach(name => {
+                target.dispatchEvent(new MouseEvent(name, {bubbles: true, view: window}));
+            });
+        """, save_btn)
+        return True
+    except Exception:
+        return False
+
+# --- MAIN WORKFLOW ---
+inject_cookies()
+
+with open(csv_file, 'r') as file:
+    reader = csv.reader(file)
+    for row in reader:
+        job_url = f"https://www.naukri.com{row[0]}"
+        driver.get(job_url)
+        time.sleep(3)
+        
+        try:
+            # Check if already applied
+            if driver.find_elements(By.ID, "already-applied"):
+                print(f"⏩ Already applied for {row[0]}")
+                continue
+
+            # Hit the main Apply button
+            driver.find_element(By.XPATH, "//*[text()='Apply']").click()
+            time.sleep(4)
+
+            # Chatbot Questionnaire Loop
+            status = True
+            while status:
+                # 1. Handle Radios
+                radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
+                if radios:
+                    q_text = driver.find_element(By.XPATH, "//li[contains(@class, 'botItem')]").text
+                    ans_idx = int(bard_flash_response(f"Question: {q_text}\nOptions: {[r.text for r in radios]}"))
+                    driver.execute_script("arguments[0].click();", radios[ans_idx-1].find_element(By.TAG_NAME, "input"))
+                    force_save_click()
+                    time.sleep(2)
                 
-                if "already applied" in driver.page_source.lower():
-                    continue
+                # 2. Handle Text Input
+                elif driver.find_elements(By.CLASS_NAME, "textArea"):
+                    q_text = driver.find_elements(By.TAG_NAME, "li")[-1].text
+                    ans = bard_flash_response(q_text)
+                    driver.find_element(By.CLASS_NAME, "textArea").send_keys(ans)
+                    force_save_click()
+                    time.sleep(2)
 
-                apply_btns = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(),'Apply')]")
-                if apply_btns and apply_btns[0].is_displayed():
-                    print(f"✅ Job {idx+1}: Clicking Apply...")
-                    driver.execute_script("arguments[0].click();", apply_btns[0])
-                    handle_questionnaire(driver, idx+1)
-                    applied += 1
+                # Check Success
+                if "successfully applied" in driver.page_source.lower():
+                    print(f"✅ Successfully applied: {row[0]}")
+                    capture_result("SUCCESS", job_url)
+                    applied_count += 1
+                    status = False
                 
-                if applied >= 5: break 
-            except: continue
+                # Safety break for loops
+                if "error" in driver.page_source.lower():
+                    capture_result("ERROR", job_url)
+                    status = False
 
-        print(f"🏁 Total Successful Cycles: {applied}")
-    finally:
-        driver.quit()
+        except Exception as e:
+            print(f"❌ Error applying for {row[0]}: {e}")
+            capture_result("EXCEPTION", job_url)
 
-if __name__ == "__main__":
-    run_automation()
+driver.quit()
