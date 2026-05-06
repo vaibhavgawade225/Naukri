@@ -16,53 +16,74 @@ MY_PROFILE_DATA = {
 }
 
 def process_single_step(driver):
+    """
+    Precision targeting for the 'sendMsg' chatbot button found in manual inspection.
+    """
     try:
-        # 1. FILL INPUTS (Experience/CTC)
-        inputs = driver.find_elements(By.XPATH, "//input | //textarea")
+        # 1. FILL THE TEXT BOX (Like the '7' for notice period in your screenshot)
+        # We target inputs specifically inside the chatbot/neo-agent container
+        inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//input | //div[contains(@id, 'chatbot')]//input | //input[contains(@placeholder, 'example')]")
+        
         for field in inputs:
             if not field.is_displayed(): continue
-            val = MY_PROFILE_DATA["experience"] 
-            # Force the value and trigger React's 'onchange'
+            
+            # Get specific value based on context
+            html_ctx = driver.execute_script("return (arguments[0].outerHTML + arguments[0].parentElement.innerText).toLowerCase();", field)
+            val = MY_PROFILE_DATA["experience"]
+            if "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
+            elif "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
+            elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
+
+            # Use JS to set value and 'wake up' the Save button
             driver.execute_script("""
+                arguments[0].focus();
                 arguments[0].value = arguments[1];
                 arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
                 arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
             """, field, str(val))
+            time.sleep(0.5)
 
-        # 2. SELECT RADIO OPTIONS (Yes/No)
-        # We click the first visible label that matches our 'Yes' keywords
-        options = driver.find_elements(By.XPATH, "//label | //span[contains(@class,'label')]")
-        for opt in options:
-            if opt.is_displayed() and any(k in opt.text.lower() for k in ["yes", "immediate", "willing"]):
-                driver.execute_script("arguments[0].click();", opt)
-                time.sleep(1) # CRITICAL: Wait for Save button to wake up
+        # 2. SELECT RADIOS (Yes/No)
+        labels = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//label | //div[contains(@class, 'chatbot')]//span")
+        for label in labels:
+            txt = label.text.strip().lower()
+            if txt in ["yes", "immediate", "willing", "agree"]:
+                driver.execute_script("arguments[0].click();", label)
+                time.sleep(1)
 
-        # 3. THE "HAMMER" SAVE CLICK
-        # We look for the button inside the chatbot footer specifically
-        save_btns = driver.find_elements(By.XPATH, "//div[contains(@class,'chatbot')]//button | //div[contains(@class,'footer')]//button")
+        # 3. THE FIX: Click the 'sendMsg' Button
+        # We target the exact class you found in the inspector
+        save_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'sendMsg')] | //div[contains(@class, 'send')]")
         
-        for btn in save_btns:
-            btn_text = (btn.text or "").lower()
-            if any(word in btn_text for word in ["save", "next", "continue"]):
-                print(f"   🎯 Target Found: {btn_text}. Forcing Click...")
+        for el in save_elements:
+            if "save" in el.text.lower() or "send" in el.text.lower() or el.get_attribute("tabindex") == "0":
+                print(f"   🚀 Found Chatbot Button: {el.text}. Triggering Click...")
                 
-                # We use a 3-layer click approach:
-                # Layer 1: Remove disabled state
-                driver.execute_script("arguments[0].removeAttribute('disabled');", btn)
-                driver.execute_script("arguments[0].classList.remove('disabled');", btn)
+                # Highlight for the screenshot debug
+                driver.execute_script("arguments[0].style.border='5px solid green';", el)
                 
-                # Layer 2: JavaScript Click (Bypasses overlays)
-                driver.execute_script("arguments[0].click();", btn)
+                # FORCE ENABLE & CLICK
+                driver.execute_script("""
+                    let btn = arguments[0];
+                    // Remove 'disabled' from the button or any of its children
+                    btn.classList.remove('disabled');
+                    let inner = btn.querySelector('.disabled');
+                    if(inner) inner.classList.remove('disabled');
+                    
+                    // Force the click
+                    btn.click();
+                """, el)
                 
-                # Layer 3: Physical Click (Simulates real mouse)
+                # Backup physical click
                 try:
-                    ActionChains(driver).move_to_element(btn).click().perform()
+                    ActionChains(driver).move_to_element(el).click().perform()
                 except: pass
                 
-                return True # If we clicked a Save button, we successfully finished this step
+                return True # Successfully finished this interaction
 
     except Exception as e:
-        print(f"   [!] Error: {e}")
+        print(f"   [!] Chatbot Error: {e}")
+        
     return False
     
 def handle_questionnaire(driver, job_idx):
