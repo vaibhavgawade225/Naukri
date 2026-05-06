@@ -16,25 +16,28 @@ MY_PROFILE_DATA = {
 }
 
 def process_single_step(driver):
-    """Fills only the VISIBLE questions and clicks the Save/Next button immediately."""
+    """
+    Physical typing for boxes (which worked) + 
+    Forced JS click for Save (to fix the stuck button).
+    """
     try:
         found_anything = False
-        # 1. Look for all interactive elements
+        # 1. Find all inputs
         inputs = driver.find_elements(By.XPATH, "//input | //textarea | //select | //*[@contenteditable='true']")
         
         for field in inputs:
-            if not field.is_displayed(): continue # In this loop, we only care about what's visible NOW
+            if not field.is_displayed(): continue
             
             html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
             field_type = field.get_attribute("type")
             
-            # --- RADIOS ---
+            # --- RADIOS (Physical Click) ---
             if field_type in ["radio", "checkbox"]:
                 if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
                     driver.execute_script("arguments[0].click();", field)
                     found_anything = True
             
-            # --- TEXT FIELDS ---
+            # --- TEXT FIELDS (Physical Hardware Typing) ---
             elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
                 val = "Yes"
                 if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
@@ -42,27 +45,34 @@ def process_single_step(driver):
                 elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
                 elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
                 
+                # Clear and Type physically
+                driver.execute_script("arguments[0].focus(); arguments[0].value = '';", field)
+                ActionChains(driver).send_keys(str(val)).perform()
+                
+                # Wake up React
                 driver.execute_script("""
-                    var el = arguments[0];
-                    el.focus();
-                    el.value = arguments[1];
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    el.dispatchEvent(new Event('blur', { bubbles: true }));
-                """, field, val)
+                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                """, field)
                 found_anything = True
 
-        # 2. IMMEDIATELY click the Save/Next button for this specific question
-        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit']")
+        time.sleep(1) # Short pause for UI to catch up
+
+        # 2. THE SAVE BUTTON FIX: Brute Force Search & Click
+        # We look for ANY button that looks like a 'Save' or 'Next'
+        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //a[contains(@class, 'btn')]")
         for btn in buttons:
-            if not btn.is_displayed(): continue
             btn_text = (btn.text or btn.get_attribute("value") or "").lower()
-            if any(word in btn_text for word in ["save", "submit", "next", "continue"]):
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-                time.sleep(0.5)
-                driver.execute_script("arguments[0].removeAttribute('disabled'); arguments[0].click();", btn)
-                print(f"   👉 Saved step: {btn_text}")
-                return True # We successfully completed one step
+            if any(word in btn_text for word in ["save", "submit", "next", "continue", "apply"]):
+                # FORCED CLICK: This bypasses "disabled" states or hidden overlays
+                driver.execute_script("""
+                    arguments[0].removeAttribute('disabled');
+                    arguments[0].style.pointerEvents = 'auto';
+                    arguments[0].style.display = 'block';
+                    arguments[0].click();
+                """, btn)
+                print(f"   🚀 Force-Clicked: {btn_text}")
+                return True 
                 
     except Exception as e:
         print(f"   [!] Step error: {e}")
