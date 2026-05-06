@@ -16,84 +16,72 @@ MY_PROFILE_DATA = {
 }
 
 def process_inputs_and_save(driver):
-    """Finds inputs, forces focus, and types like a physical keyboard."""
     found_inputs = False
     clicked_save = False
 
     try:
-        # 1. Broad search: Inputs, Textareas, Selects, and Content-Editable Divs
+        # 1. Target all possible input areas
         inputs = driver.find_elements(By.XPATH, "//input | //textarea | //select | //*[@contenteditable='true']")
         
         for field in inputs:
             try:
                 field_type = field.get_attribute("type")
-                if field_type in ["hidden", "submit", "button", "file"]:
-                    continue # Ignore background code elements
+                if field_type in ["hidden", "submit", "button", "file"]: continue
                     
-                # Get surrounding text to understand the question
                 html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
-            except: 
-                continue # Skip if element goes stale
+                found_inputs = True
                 
-            found_inputs = True
-            
-            # --- RADIO & CHECKBOXES ---
-            if field_type in ["radio", "checkbox"]:
-                if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
-                    # PRO FIX: Click the hidden input AND its visual wrapper to trigger the React state
-                    driver.execute_script("arguments[0].click(); if(arguments[0].parentElement) arguments[0].parentElement.click();", field)
-                    time.sleep(0.2)
-            
-            # --- SELECT DROPDOWNS ---
-            elif field.tag_name == "select":
-                driver.execute_script("arguments[0].selectedIndex = 1; arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
-
-            # --- TEXT & NUMBER FIELDS ---
-            elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
-                val = "Yes"
-                if "current" in html_ctx and "ctc" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
-                elif "expected" in html_ctx and "ctc" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-                elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
+                # --- RADIO & CHECKBOXES ---
+                if field_type in ["radio", "checkbox"]:
+                    if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
+                        driver.execute_script("arguments[0].click();", field)
+                        # Trigger change events so React notices the selection
+                        driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
                 
-                try:
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
-                    time.sleep(0.5)
+                # --- TEXT & NUMBER FIELDS ---
+                elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
+                    val = "Yes"
+                    if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
+                    elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
+                    elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
+                    elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
                     
-                    # PRO FIX: 1. Force Focus and Clear via JavaScript
-                    driver.execute_script("arguments[0].focus(); arguments[0].value = '';", field)
-                    time.sleep(0.2)
-                    
-                    # PRO FIX: 2. Hardware-Level Typing via ActionChains
-                    ActionChains(driver).send_keys(str(val)).perform()
-                    
-                    # PRO FIX: 3. Dispatch manual events so the "Save" button wakes up
+                    # PRO FIX: The 'React Wake-up' Sequence
                     driver.execute_script("""
-                        arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-                        arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-                        arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
-                    """, field)
-                    time.sleep(0.5)
-                except: pass
+                        var el = arguments[0];
+                        var val = arguments[1];
+                        el.focus();
+                        el.value = val;
+                        // Dispatch multiple events to satisfy React/Redux listeners
+                        el.dispatchEvent(new Event('keydown', { bubbles: true }));
+                        el.dispatchEvent(new Event('keypress', { bubbles: true }));
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('keyup', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        el.dispatchEvent(new Event('blur', { bubbles: true }));
+                    """, field, val)
+
+            except: continue
+
+        time.sleep(2) # Wait for button to enable
 
         # 2. Click Save/Submit/Next/Apply
-        buttons = driver.find_elements(By.XPATH, "//button")
+        # We search for buttons by text more aggressively
+        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //input[@type='button']")
         for btn in buttons:
             try:
-                if not btn.is_displayed(): continue
-                btn_text = btn.text.lower()
+                btn_text = (btn.text or btn.get_attribute("value") or "").lower()
                 if any(word in btn_text for word in ["save", "submit", "next", "apply"]):
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-                    time.sleep(1)
-                    # Click via JS bypasses pop-up blockers
+                    # If button is disabled, force enable it for the click
+                    driver.execute_script("arguments[0].removeAttribute('disabled');", btn)
                     driver.execute_script("arguments[0].click();", btn)
                     clicked_save = True
-                    print("   🚀 Clicked Submit/Next button.")
+                    print(f"   🚀 Clicked: {btn_text}")
                     break
             except: continue
 
     except Exception as e:
-        pass 
+        print(f"   [!] Error in frame: {e}")
 
     return found_inputs, clicked_save
 
