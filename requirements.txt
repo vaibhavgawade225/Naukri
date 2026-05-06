@@ -1,3 +1,4 @@
 selenium
 selenium-stealth
 google-generativeai
+webdriver-manager
