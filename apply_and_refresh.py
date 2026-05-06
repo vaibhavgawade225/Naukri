@@ -16,76 +16,82 @@ MY_PROFILE_DATA = {
 }
 
 def process_single_step(driver):
-    """
-    Fills questions and clicks ONLY the Save button inside the questionnaire.
-    It explicitly ignores the 'Save Job' button next to the Apply button.
-    """
+    """Fills questions and clicks the Save button without strict visibility checks."""
     try:
         found_anything = False
         
-        # 1. FILL TEXT/NUMBER BOXES
-        inputs = driver.find_elements(By.XPATH, "//input[@type='text'] | //input[@type='number'] | //textarea")
+        # 1. FILL TEXT/NUMBER BOXES (Bypassing Visibility Check)
+        inputs = driver.find_elements(By.XPATH, "//input[not(@type='hidden') and not(@type='submit') and not(@type='radio') and not(@type='checkbox')] | //textarea")
         for field in inputs:
-            if not field.is_displayed(): continue
-            html_ctx = driver.execute_script("return arguments[0].outerHTML + arguments[0].parentElement.innerText;", field).lower()
-            
-            val = "Yes"
-            if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
-            elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
-            elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-            elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
+            try:
+                html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
+                
+                val = "Yes"
+                if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
+                elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
+                elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
+                elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
 
-            driver.execute_script("arguments[0].style.border='2px solid blue';", field)
-            driver.execute_script("arguments[0].focus(); arguments[0].value = '';", field)
-            ActionChains(driver).move_to_element(field).click().send_keys(str(val)).perform()
-            driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
-            found_anything = True
-
-        # 2. CLICK RADIO BUTTONS (Text-Based Search)
-        # We look for labels/spans containing the target answers
-        options = driver.find_elements(By.XPATH, "//label | //span | //li[contains(@class, 'list')]")
-        for opt in options:
-            if not opt.is_displayed(): continue
-            txt = opt.text.strip().lower()
-            if any(k == txt or k in txt for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
-                driver.execute_script("arguments[0].style.border='2px solid red';", opt)
-                driver.execute_script("arguments[0].click();", opt)
+                # Use pure JS to bypass "Element Not Interactable" errors on hidden React boxes
+                driver.execute_script("""
+                    arguments[0].style.border='2px solid blue';
+                    arguments[0].focus();
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+                """, field, str(val))
                 found_anything = True
-                time.sleep(0.5)
+            except:
+                continue
+
+        # 2. CLICK RADIO BUTTONS (Bypassing Visibility Check)
+        options = driver.find_elements(By.XPATH, "//label | //span | //li")
+        for opt in options:
+            try:
+                txt = opt.text.strip().lower()
+                # Skip empty text elements to save time
+                if not txt: continue 
+                
+                if any(k == txt or f" {k} " in f" {txt} " for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
+                    driver.execute_script("arguments[0].style.border='2px solid red'; arguments[0].click();", opt)
+                    found_anything = True
+            except:
+                continue
 
         # 3. CLICK THE CORRECT SAVE BUTTON
-        time.sleep(1)
-        # Targeted XPATH: Find buttons ONLY inside the application popup/chatbot container
-        # This skips the 'Save Job' button in the main header
-        form_buttons = driver.find_elements(By.XPATH, """
-            //div[contains(@class, 'bot-footer')]//button | 
-            //div[contains(@class, 'drawer')]//button | 
-            //div[contains(@class, 'footer')]//button[not(contains(@class, 'save-job'))] |
-            //button[contains(@class, 'save-and-continue')] |
-            //button[contains(text(), 'Next')] |
-            //button[contains(text(), 'Submit')]
-        """)
+        time.sleep(1.5) # Wait a moment for React to register the typing/clicking
+        form_buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //input[@type='button']")
 
         for btn in form_buttons:
-            if not btn.is_displayed(): continue
-            
-            # CRITICAL CHECK: Ignore the button if it is part of the JD Header
-            is_main_page_save = driver.execute_script("""
-                let el = arguments[0];
-                return !!el.closest('.jd-header-comp') || !!el.closest('.jd-header');
-            """, btn)
-            
-            if is_main_page_save:
-                continue # Skip this button! It's the wrong one.
+            try:
+                btn_text = (btn.text or btn.get_attribute("value") or "").lower()
+                
+                # Check if it is a relevant button
+                if any(word in btn_text for word in ["save", "next", "continue", "submit"]):
+                    
+                    # CRITICAL CHECK: Ignore the button if it is part of the JD Header (Top of the page)
+                    is_main_page_save = driver.execute_script("""
+                        let el = arguments[0];
+                        return !!el.closest('.jd-header-comp') || !!el.closest('.jd-header');
+                    """, btn)
+                    
+                    if is_main_page_save:
+                        continue # Skip the wrong button!
 
-            btn_text = btn.text.lower()
-            if any(word in btn_text for word in ["save", "next", "continue", "submit"]):
-                print(f"   🎯 Questionnaire Button Found: {btn_text}")
-                driver.execute_script("arguments[0].style.border='5px solid green'; arguments[0].click();", btn)
-                return True
+                    print(f"   🎯 Questionnaire Button Found: {btn_text}")
+                    driver.execute_script("""
+                        arguments[0].style.border='5px solid green'; 
+                        arguments[0].removeAttribute('disabled');
+                        arguments[0].click();
+                    """, btn)
+                    return True # Clicked successfully, exit the step
+            except:
+                continue
                 
     except Exception as e:
         print(f"   [!] Step Error: {e}")
+        
     return False
 
 def handle_questionnaire(driver, job_idx):
