@@ -5,13 +5,19 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium_stealth import stealth
+from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from dotenv import load_dotenv
+load_dotenv()
 
 # --- YOUR PROFILE DATA ---
-MY_PROFILE_DATA = {
-    "current_ctc": "3", 
-    "expected_ctc": "5", 
-    "notice_period": "15", 
-    "experience": "2"
+MY_PROFILE_DATA = {  # Or load from env
+    "current_ctc": os.getenv('CURRENT_CTC', '3'),
+    "expected_ctc": os.getenv('EXPECTED_CTC', '5'),
+    "notice_period": os.getenv('NOTICE_PERIOD', '15'),
+    "experience": os.getenv('EXPERIENCE', '2')
 }
 
 def get_shadow_root(driver, element):
@@ -54,72 +60,125 @@ def find_all_inputs(driver):
     return all_inputs
 
 def handle_questionnaire(driver, job_idx):
-    """Looping questionnaire handler using CDP tech."""
-    try:
-        for step in range(1, 6):
-            time.sleep(6) # Wait for popup/next question
-            driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_START.png")
+    wait = WebDriverWait(driver, 10)
+    max_steps = 8  # Increased for multi-page forms
+    
+    for step in range(1, max_steps + 1):
+        print(f"   Step {step}: Waiting for form...")
+        time.sleep(3)
+        driver.save_screenshot(f"output/JOB_{job_idx}_STEP_{step}.png")  # Save to output/
 
-            # 1. FIND INPUTS (Piercing Shadow DOM if needed)
-            inputs = find_all_inputs(driver)
-            if not inputs:
-                print(f"   Step {step}: No inputs found. Checking if job is already applied...")
-                break
+        # Switch to iframe if present (common in Naukri popups)
+        try:
+            iframe = wait.until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
+            driver.switch_to.frame(iframe)
+            print("   Switched to iframe")
+        except TimeoutException:
+            pass  # No iframe
 
-            for field in inputs:
-                if not field.is_displayed(): continue
-                
-                # Context identification
+        # Targeted field finders
+        fields = []
+
+        # Text inputs/textareas (prioritize by common Naukri attrs)
+        text_fields = driver.find_elements(By.CSS_SELECTOR, 
+            "input[type='text'], input[type='number'], input[type='email'], textarea, [role='textbox']")
+        fields.extend(text_fields)
+
+        # Radios: Find inputs + associated labels
+        radio_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='radio']")
+        for radio in radio_inputs:
+            if radio.is_displayed():
+                fields.append(radio)
+                # Click label too for React trigger
                 try:
-                    attr_text = f"{field.get_attribute('placeholder')} {field.get_attribute('name')} {field.get_attribute('id')}".lower()
-                    parent_text = driver.execute_script("return arguments[0].parentElement.innerText;", field).lower()
-                    ctx = attr_text + " " + parent_text
-                except: ctx = ""
+                    label = driver.execute_script("return arguments[0].closest('label') || arguments[0].previousElementSibling;", radio)
+                    if label: fields.append(label)
+                except: pass
 
-                # RADIO BUTTONS
-                if field.get_attribute("type") == "radio":
-                    if any(k in ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
-                        driver.execute_script("arguments[0].click();", field)
-                
-                # TEXT / NUMBER FIELDS
-                elif field.tag_name in ["input", "textarea"]:
-                    val = "Yes" 
-                    if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
-                    elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                    elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
-                    elif "experience" in ctx: val = MY_PROFILE_DATA["experience"]
-                    cdp_type(driver, field, val)
+        # Checkboxes (bonus)
+        check_fields = driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
+        fields.extend(check_fields)
 
-                # SELECT DROPDOWNS
-                elif field.tag_name == "select":
-                    driver.execute_script("arguments[0].selectedIndex = 1; arguments[0].dispatchEvent(new Event('change'));", field)
+        # Selects
+        selects = driver.find_elements(By.TAG_NAME, "select")
+        fields.extend(selects)
 
-            # 2. CLICK SAVE/SUBMIT (Ultra-broad search)
-            save_button = None
-            selectors = [
-                "//button[contains(translate(., 'SAVE', 'save'), 'save')]",
-                "//button[contains(translate(., 'SUBMIT', 'submit'), 'submit')]",
-                "//button[contains(translate(., 'NEXT', 'next'), 'next')]",
-                "//div[contains(@class, 'footer')]//button",
-                "//button[@type='submit']"
-            ]
-            for sel in selectors:
-                btns = driver.find_elements(By.XPATH, sel)
-                for b in btns:
-                    if b.is_displayed(): save_button = b; break
-                if save_button: break
+        if not fields:
+            print(f"   No fields found. Likely complete.")
+            driver.switch_to.default_content()
+            return True
 
-            if save_button:
-                driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_READY.png")
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", save_button)
-                time.sleep(1)
-                driver.execute_script("arguments[0].click();", save_button)
-                print(f"🚀 Job {job_idx}: Step {step} Submitted.")
-            else:
-                print(f"✅ Job {job_idx}: Application likely complete.")
+        # Process fields
+        for field in fields:
+            if not field.is_displayed(): continue
+            
+            # Scroll and hover
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", field)
+            ActionChains(driver).move_to_element(field).perform()
+            time.sleep(0.5)
+
+            ctx = (field.get_attribute('placeholder') or '' + ' ' +
+                   field.get_attribute('name') or '' + ' ' +
+                   field.get_attribute('label') or '' + ' ' +
+                   field.text).lower()
+
+            print(f"   Processing field ctx: {ctx[:50]}...")
+
+            if field.tag_name == 'input' and field.get_attribute('type') == 'radio':
+                # Radio: Select based on positive keywords, click label/input
+                if any(kw in ctx for kw in ['yes', 'willing', 'agree', 'immediate', '15', 'relocate']):
+                    try:
+                        field.click()
+                        print("   Radio selected")
+                    except: pass
+
+            elif field.tag_name == 'input' and field.get_attribute('type') == 'checkbox':
+                field.click()  # Default check positives
+                print("   Checkbox checked")
+
+            elif field.tag_name in ['input', 'textarea']:
+                val = "Yes"
+                if any(k in ctx for k in ['current', 'ctc', 'salary']): val = MY_PROFILE_DATA['current_ctc']
+                elif any(k in ctx for k in ['expect', 'ctc', 'salary']): val = MY_PROFILE_DATA['expected_ctc']
+                elif any(k in ctx for k in ['notice', 'join']): val = MY_PROFILE_DATA['notice_period']
+                elif 'experi' in ctx: val = MY_PROFILE_DATA['experience']
+                cdp_type(driver, field, val)  # Keep your CDP func
+
+            elif field.tag_name == 'select':
+                try:
+                    sel = Select(field)
+                    sel.select_by_visible_text("Yes")  # Or first option
+                    print("   Select set")
+                except: pass
+
+        # Find & click Next/Save (more selectors)
+        save_selectors = [
+            "//button[contains(translate(text(), 'SAVE', 'save'), 'save')]",
+            "//button[contains(translate(text(), 'NEXT', 'next'), 'next')]",
+            "//button[contains(translate(text(), 'SUBMIT', 'submit'), 'submit')]",
+            "//span[contains(text(), 'Continue')]/parent::button",
+            "[data-automation='save-continue']"
+        ]
+        save_btn = None
+        for sel in save_selectors:
+            try:
+                save_btn = wait.until(EC.element_to_be_clickable((By.XPATH, sel)))
                 break
+            except TimeoutException:
+                continue
 
-        return True
+        if save_btn:
+            driver.execute_script("arguments[0].click();", save_btn)
+            print(f"   Step {step} submitted")
+        else:
+            print(f"   No submit btn; assuming done")
+            break
+
+        driver.switch_to.default_content()  # Exit iframe
+
+    print(f"✅ Job {job_idx} questionnaire complete")
+    return True
+    
     except Exception as e:
         print(f"❌ Critical Error: {e}")
         return False
