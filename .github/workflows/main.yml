@@ -27,21 +27,15 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
-      - name: Install Firefox and Geckodriver
-        run: |
-          sudo apt-get update
-          sudo apt-get install firefox
-          wget https://github.com/mozilla/geckodriver/releases/download/v0.33.0/geckodriver-v0.33.0-linux64.tar.gz
-          tar -xvzf geckodriver-v0.33.0-linux64.tar.gz
-          sudo mv geckodriver /usr/local/bin/
+          cache: 'pip' # This caches your dependencies so 'pip install' is instant next time
 
       - name: Install dependencies
-        run: pip install selenium google-generativeai
+        run: pip install selenium selenium-stealth google-generativeai webdriver-manager
 
       - name: Run Apply Script
         env:
-          NAUKRI_USER: ${{ secrets.NAUKRI_USERNAME }}
+          NAUKRI_USER: ${{ secrets.NAUKRI_EMAIL }}
           NAUKRI_PASS: ${{ secrets.NAUKRI_PASSWORD }}
-          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python apply_jobs.py
+          NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        run: python apply_and_refresh.py
