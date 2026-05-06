@@ -39,3 +39,10 @@ jobs:
           NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         run: python apply_and_refresh.py
+
+      - name: Upload Debug Screenshots
+        if: always() # Runs even if the script fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: naukri-debug-logs
+          path: logs/
