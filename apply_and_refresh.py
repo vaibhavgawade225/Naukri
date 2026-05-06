@@ -16,66 +16,71 @@ MY_PROFILE_DATA = {
 }
 
 def process_single_step(driver):
-    """
-    Physical typing for boxes (which worked) + 
-    Forced JS click for Save (to fix the stuck button).
-    """
     try:
         found_anything = False
-        # 1. Find all inputs
-        inputs = driver.find_elements(By.XPATH, "//input | //textarea | //select | //*[@contenteditable='true']")
         
+        # 1. HANDLE RADIO BUTTONS (Deep Search)
+        # We look for the visible labels/spans that humans actually click
+        labels = driver.find_elements(By.XPATH, "//label | //span[@class='label'] | //div[contains(@class, 'radio')]")
+        for label in labels:
+            if not label.is_displayed(): continue
+            txt = label.text.lower()
+            # Match common 'Yes' or 'Notice Period' answers
+            if any(k in txt for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
+                # Visual Debug: Draw a red box around what we click
+                driver.execute_script("arguments[0].style.border='2px solid red';", label)
+                driver.execute_script("arguments[0].click();", label)
+                found_anything = True
+                time.sleep(0.5)
+
+        # 2. HANDLE TEXT BOXES (Already working, but adding a 'Pulse')
+        inputs = driver.find_elements(By.XPATH, "//input[@type='text'] | //input[@type='number'] | //textarea")
         for field in inputs:
             if not field.is_displayed(): continue
             
-            html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
-            field_type = field.get_attribute("type")
-            
-            # --- RADIOS (Physical Click) ---
-            if field_type in ["radio", "checkbox"]:
-                if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
-                    driver.execute_script("arguments[0].click();", field)
-                    found_anything = True
-            
-            # --- TEXT FIELDS (Physical Hardware Typing) ---
-            elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
-                val = "Yes"
-                if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
-                elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-                elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
-                
-                # Clear and Type physically
-                driver.execute_script("arguments[0].focus(); arguments[0].value = '';", field)
-                ActionChains(driver).send_keys(str(val)).perform()
-                
-                # Wake up React
-                driver.execute_script("""
-                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-                """, field)
-                found_anything = True
+            html_ctx = driver.execute_script("return arguments[0].outerHTML + arguments[0].parentElement.innerText;", field).lower()
+            val = "Yes"
+            if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
+            elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
+            elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
+            elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
 
-        time.sleep(1) # Short pause for UI to catch up
+            driver.execute_script("arguments[0].style.border='2px solid blue';", field)
+            driver.execute_script("arguments[0].focus(); arguments[0].value = '';", field)
+            ActionChains(driver).move_to_element(field).click().send_keys(str(val)).perform()
+            
+            # This "Pulse" tells React: "Hey! A human just typed here!"
+            driver.execute_script("""
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+            """, field)
+            found_anything = True
 
-        # 2. THE SAVE BUTTON FIX: Brute Force Search & Click
-        # We look for ANY button that looks like a 'Save' or 'Next'
-        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //a[contains(@class, 'btn')]")
+        # 3. HANDLE SAVE BUTTON (The "Double Hammer")
+        time.sleep(1)
+        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //span[contains(text(), 'Save')]")
         for btn in buttons:
-            btn_text = (btn.text or btn.get_attribute("value") or "").lower()
+            btn_text = (btn.text or "").lower()
             if any(word in btn_text for word in ["save", "submit", "next", "continue", "apply"]):
-                # FORCED CLICK: This bypasses "disabled" states or hidden overlays
+                print(f"   🎯 Attempting to click: {btn_text}")
+                driver.execute_script("arguments[0].style.border='5px solid green';", btn)
+                
+                # Double Hammer: Remove 'disabled' and click via JS AND Physical Mouse
                 driver.execute_script("""
                     arguments[0].removeAttribute('disabled');
-                    arguments[0].style.pointerEvents = 'auto';
-                    arguments[0].style.display = 'block';
+                    arguments[0].classList.remove('disabled');
                     arguments[0].click();
                 """, btn)
-                print(f"   🚀 Force-Clicked: {btn_text}")
-                return True 
+                
+                try:
+                    ActionChains(driver).move_to_element(btn).click().perform()
+                except: pass
+                
+                return True # Move to next question
                 
     except Exception as e:
-        print(f"   [!] Step error: {e}")
+        print(f"   [!] Error: {e}")
     
     return False
     
