@@ -15,104 +15,87 @@ MY_PROFILE_DATA = {
     "experience": "2"
 }
 
-def process_inputs_and_save(driver):
-    found_inputs = False
-    clicked_save = False
-
+def process_single_step(driver):
+    """Fills only the VISIBLE questions and clicks the Save/Next button immediately."""
     try:
-        # 1. Target all possible input areas
+        found_anything = False
+        # 1. Look for all interactive elements
         inputs = driver.find_elements(By.XPATH, "//input | //textarea | //select | //*[@contenteditable='true']")
         
         for field in inputs:
-            try:
-                field_type = field.get_attribute("type")
-                if field_type in ["hidden", "submit", "button", "file"]: continue
-                    
-                html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
-                found_inputs = True
+            if not field.is_displayed(): continue # In this loop, we only care about what's visible NOW
+            
+            html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
+            field_type = field.get_attribute("type")
+            
+            # --- RADIOS ---
+            if field_type in ["radio", "checkbox"]:
+                if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
+                    driver.execute_script("arguments[0].click();", field)
+                    found_anything = True
+            
+            # --- TEXT FIELDS ---
+            elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
+                val = "Yes"
+                if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
+                elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
+                elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
+                elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
                 
-                # --- RADIO & CHECKBOXES ---
-                if field_type in ["radio", "checkbox"]:
-                    if any(k in html_ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
-                        driver.execute_script("arguments[0].click();", field)
-                        # Trigger change events so React notices the selection
-                        driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
-                
-                # --- TEXT & NUMBER FIELDS ---
-                elif field.tag_name in ["input", "textarea"] or field.get_attribute("contenteditable") == "true":
-                    val = "Yes"
-                    if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
-                    elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                    elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-                    elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
-                    
-                    # PRO FIX: The 'React Wake-up' Sequence
-                    driver.execute_script("""
-                        var el = arguments[0];
-                        var val = arguments[1];
-                        el.focus();
-                        el.value = val;
-                        // Dispatch multiple events to satisfy React/Redux listeners
-                        el.dispatchEvent(new Event('keydown', { bubbles: true }));
-                        el.dispatchEvent(new Event('keypress', { bubbles: true }));
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        el.dispatchEvent(new Event('keyup', { bubbles: true }));
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                        el.dispatchEvent(new Event('blur', { bubbles: true }));
-                    """, field, val)
+                driver.execute_script("""
+                    var el = arguments[0];
+                    el.focus();
+                    el.value = arguments[1];
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                """, field, val)
+                found_anything = True
 
-            except: continue
-
-        time.sleep(2) # Wait for button to enable
-
-        # 2. Click Save/Submit/Next/Apply
-        # We search for buttons by text more aggressively
-        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //input[@type='button']")
+        # 2. IMMEDIATELY click the Save/Next button for this specific question
+        buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit']")
         for btn in buttons:
-            try:
-                btn_text = (btn.text or btn.get_attribute("value") or "").lower()
-                if any(word in btn_text for word in ["save", "submit", "next", "apply"]):
-                    # If button is disabled, force enable it for the click
-                    driver.execute_script("arguments[0].removeAttribute('disabled');", btn)
-                    driver.execute_script("arguments[0].click();", btn)
-                    clicked_save = True
-                    print(f"   🚀 Clicked: {btn_text}")
-                    break
-            except: continue
-
+            if not btn.is_displayed(): continue
+            btn_text = (btn.text or btn.get_attribute("value") or "").lower()
+            if any(word in btn_text for word in ["save", "submit", "next", "continue"]):
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                time.sleep(0.5)
+                driver.execute_script("arguments[0].removeAttribute('disabled'); arguments[0].click();", btn)
+                print(f"   👉 Saved step: {btn_text}")
+                return True # We successfully completed one step
+                
     except Exception as e:
-        print(f"   [!] Error in frame: {e}")
-
-    return found_inputs, clicked_save
-
+        print(f"   [!] Step error: {e}")
+    
+    return False
+    
 def handle_questionnaire(driver, job_idx):
-    """Checks main page, then deep-dives into all iframes."""
-    for step in range(1, 6):
-        time.sleep(6)
-        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_START.png")
+    """The 'Human Loop': Fill one, Save one, Repeat."""
+    # We allow up to 10 'steps' per job application
+    for step in range(1, 11):
+        time.sleep(3) # Wait for React to render the next question
         
-        # 1. Check Main Window
+        # Check Main Page
         driver.switch_to.default_content()
-        found, clicked = process_inputs_and_save(driver)
-
-        # 2. If nothing found, check every Iframe (Chatbot Apply Boxes)
-        if not found and not clicked:
+        success = process_single_step(driver)
+        
+        # If not found on main page, check iframes
+        if not success:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for frame in iframes:
                 try:
                     driver.switch_to.frame(frame)
-                    f_found, f_clicked = process_inputs_and_save(driver)
-                    if f_found or f_clicked:
-                        found, clicked = True, True
+                    if process_single_step(driver):
+                        success = True
                         break
                 except: pass
-                finally:
-                    driver.switch_to.default_content()
-
-        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_END.png")
-
-        if not found and not clicked:
-            print(f"   ✅ Job {job_idx}: Form finished or no inputs found at Step {step}.")
+                finally: driver.switch_to.default_content()
+        
+        # Capture progress for debugging
+        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}.png")
+        
+        if not success:
+            print(f"   ✅ Job {job_idx}: No more 'Save' buttons or questions found.")
             break
         
         time.sleep(3)
