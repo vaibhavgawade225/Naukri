@@ -41,12 +41,12 @@ csv_file = "jobs.csv"
 applied_count = 0
 
 def inject_cookies():
-    """Injects cookies to bypass login. Uses 'NAUKRI_COOKIES' secret in GitHub."""
+    """Injects cookies to bypass login. Uses 'NAUKRI_COOKIE' secret in GitHub."""
     driver.get("https://www.naukri.com/")
     time.sleep(2)
     
     # Expects cookies in JSON format: [{"name": "...", "value": "..."}, ...]
-    cookies_raw = os.environ.get('NAUKRI_COOKIES')
+    cookies_raw = os.environ.get('NAUKRI_COOKIE')
     if cookies_raw:
         cookies = json.loads(cookies_raw)
         for cookie in cookies:
