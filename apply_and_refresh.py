@@ -1,7 +1,7 @@
 import os
 import asyncio
 import random
-import re
+import re  # <--- FIXED: Moved to top
 from playwright.async_api import async_playwright
 
 # --- YOUR PROFILE DATA ---
@@ -12,100 +12,81 @@ MY_PROFILE_DATA = {
     "experience": "2"
 }
 
-async def fill_frame_inputs(frame, job_idx, step):
+async def fill_inputs_in_all_frames(page, job_idx, step):
     """
-    Finds and fills inputs inside a specific frame.
-    Returns True if it found and interacted with anything.
+    Finds and fills inputs inside the main page AND all iframes.
     """
-    found_something = False
-    # Look for all possible input types
-    inputs = frame.locator("input:not([type='hidden']), textarea, select, [contenteditable='true']")
-    count = await inputs.count()
-
-    for i in range(count):
-        field = inputs.nth(i)
-        if not await field.is_visible():
-            continue
+    found_any = False
+    # Check main page + every frame (Naukri often uses chatbots in iframes)
+    for frame in page.frames:
+        inputs = frame.locator("input:not([type='hidden']), textarea, select")
+        count = await inputs.count()
         
-        found_something = True
-        # Get context to decide what to type
-        html = await field.evaluate("el => el.outerHTML + el.parentElement.innerText")
-        ctx = html.lower()
-
-        # 1. Handle Radios/Checkboxes
-        field_type = await field.get_attribute("type")
-        if field_type in ["radio", "checkbox"]:
-            if any(k in ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
-                await field.click(force=True)
-        
-        # 2. Handle Text/Number/Textarea
-        elif await field.evaluate("el => ['INPUT', 'TEXTAREA'].includes(el.tagName)"):
-            val = "Yes" # Default
-            if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
-            elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
-            elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
-            elif "experience" in ctx: val = MY_PROFILE_DATA["experience"]
+        for i in range(count):
+            field = inputs.nth(i)
+            if not await field.is_visible():
+                continue
             
-            await field.click() # Focus
-            await field.fill("") # Clear
-            await field.type(val, delay=100) # Type like a human
-            await field.press("Enter") # Trigger React state
+            found_any = True
+            # Get text context to identify the question
+            html_context = await field.evaluate("el => el.outerHTML + el.parentElement.innerText")
+            ctx = html_context.lower()
 
-        # 3. Handle Selects
-        elif await field.evaluate("el => el.tagName === 'SELECT'"):
-            try: await field.select_option(index=1)
-            except: pass
-
-    return found_something
+            # Handle Radios
+            if await field.get_attribute("type") == "radio":
+                if any(k in ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
+                    await field.click(force=True)
+            
+            # Handle Text/Number boxes
+            elif await field.evaluate("el => ['INPUT', 'TEXTAREA'].includes(el.tagName)"):
+                val = "Yes" 
+                if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
+                elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
+                elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
+                elif "experience" in ctx: val = MY_PROFILE_DATA["experience"]
+                
+                await field.click()
+                await field.fill(val)
+                await field.press("Tab") # Trigger React state update
+    return found_any
 
 async def handle_questionnaire(page, job_idx):
-    """Recursively checks all frames for the questionnaire."""
     try:
         for step in range(1, 6):
-            await page.wait_for_timeout(6000)
-            await page.screenshot(path=f"JOB_{job_idx}_STEP_{step}_DEBUG.png")
+            await page.wait_for_timeout(5000)
+            await page.screenshot(path=f"JOB_{job_idx}_STEP_{step}_START.png")
 
-            # Check Main Page + All Iframes
-            all_frames = page.frames
-            any_input_found = False
-            
-            for frame in all_frames:
-                if await fill_frame_inputs(frame, job_idx, step):
-                    any_input_found = True
-            
-            if not any_input_found:
-                print(f"   [Job {job_idx}] No inputs detected in any frame at Step {step}.")
+            # Fill all frames
+            if not await fill_inputs_in_all_frames(page, job_idx, step):
+                print(f"   [Step {step}] No questions found in any frame.")
                 break
 
-            # FIND & CLICK SAVE (In any frame)
-            clicked = False
-            for frame in all_frames:
-                save_btn = frame.locator("button:has-text('Save'), button:has-text('Submit'), button:has-text('Next'), button:has-text('Apply')").first
-                if await save_btn.is_visible():
-                    await save_btn.click()
-                    print(f"   🚀 Job {job_idx}: Clicked button in frame.")
-                    clicked = True
+            # Click Save/Submit in whichever frame it exists
+            btn_clicked = False
+            for frame in page.frames:
+                # Playwright's Regex search for any variation of Save/Submit/Next
+                submit_btn = frame.get_by_role("button", name=re.compile("save|submit|next|apply", re.IGNORECASE))
+                if await submit_btn.is_visible():
+                    await submit_btn.click()
+                    btn_clicked = True
                     break
             
-            if not clicked:
-                print(f"   [Job {job_idx}] Inputs filled but no Save button found.")
+            if not btn_clicked:
                 break
-                
-            await page.wait_for_timeout(3000)
     except Exception as e:
-        print(f"   [!] Questionnaire Error: {e}")
+        print(f"   [!] Error handling questionnaire: {e}")
 
 async def run_automation():
     async with async_playwright() as p:
-        print("🚀 Starting Multi-Frame Playwright Bot...")
+        print("🚀 Starting Iframe-Ready Playwright Bot...")
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
-            viewport={'width': 1280, 'height': 800},
+            viewport={'width': 1920, 'height': 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
-        # Cookie Login
+        # Login with Cookies
         cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
         await page.goto("https://www.naukri.com/")
         if cookie_raw:
@@ -115,7 +96,7 @@ async def run_automation():
                     await context.add_cookies([{'name': n.strip(), 'value': v.strip(), 'domain': '.naukri.com', 'path': '/'}])
             await page.reload()
 
-        # Search Jobs
+        # Job List
         await page.goto("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f")
         await page.wait_for_timeout(5000)
         
@@ -131,20 +112,18 @@ async def run_automation():
                 if "already applied" in (await page.content()).lower():
                     continue
 
-                apply_btn = page.locator("button:has-text('Apply')").first
+                apply_btn = page.get_by_role("button", name="Apply", exact=True)
                 if await apply_btn.is_visible():
-                    print(f"✅ Job {idx+1}: Clicking Apply...")
+                    print(f"✅ Applying to Job {idx+1}...")
                     await apply_btn.click()
                     await handle_questionnaire(page, idx+1)
                     applied += 1
                 
                 if applied >= 5: break
-            except Exception as e:
-                print(f"   Error on job {idx+1}: {e}")
-                continue
+            except: continue
 
         await browser.close()
-        print(f"🏁 Final Apply Count: {applied}")
+        print(f"🏁 Final Applied Count: {applied}")
 
 if __name__ == "__main__":
     asyncio.run(run_automation())
