@@ -17,60 +17,54 @@ MY_PROFILE_DATA = {
 
 def process_single_step(driver):
     """
-    The main logic: Target ONLY the chatbot area and the specific 'sendMsg' Save button.
+    Specifically targets the inner 'sendMsg' div within the chatbot container.
     """
     try:
-        # 1. Fill Textbox (Notice Period/CTC/Exp)
-        # Using the specific 'example' placeholder check from your screenshot
-        inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//input | //input[contains(@placeholder, 'example')]")
-        for field in inputs:
-            if not field.is_displayed(): continue
-            val = MY_PROFILE_DATA["experience"] # Default
-            # Context-aware values
-            html_ctx = (field.get_attribute("placeholder") or "").lower()
-            if "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-            
-            driver.execute_script("""
-                arguments[0].focus();
-                arguments[0].value = arguments[1];
-                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-            """, field, str(val))
-            time.sleep(0.5)
-
-        # 2. Click Radio/Choice (Yes/No)
-        choices = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//label | //div[contains(@class, 'chatbot')]//span[contains(@class, 'text')]")
-        for opt in choices:
-            txt = opt.text.strip().lower()
-            if txt in ["yes", "immediate", "willing", "agree", "confirm"]:
-                driver.execute_script("arguments[0].click();", opt)
-                time.sleep(1) # Wait for Save button to enable
-
-        # 3. CLICK THE SPECIFIC SAVE BUTTON (The id/class you provided)
-        # We target the 'sendMsg' div and ensure it only contains the word 'Save'
-        # This prevents clicking 'Send me jobs like this'
-        save_btn = None
-        btns = driver.find_elements(By.XPATH, "//div[contains(@class, 'sendMsg')] | //div[contains(@id, 'sendMsg')]")
+        # 1. Fill Textbox / Select Radio
+        # (Assuming the answering logic from previous steps is working)
+        active_inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//input")
+        for field in active_inputs:
+            if field.is_displayed():
+                val = MY_PROFILE_DATA["experience"]
+                driver.execute_script("arguments[0].value = arguments[1];", field, str(val))
+                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
         
-        for b in btns:
-            if b.text.strip() == "Save":
-                save_btn = b
-                break
+        time.sleep(1) # Wait for the Save button to become active
+
+        # 2. THE SAVE BUTTON FIX
+        # We target the specific inner div you provided: <div class="sendMsg">Save</div>
+        # We use a path that finds the 'sendMsg' class inside the 'send' container.
+        save_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'send')]//div[contains(@class, 'sendMsg')]")
         
-        if save_btn:
-            print(f"   🚀 Clicking the verified 'Save' div.")
-            driver.execute_script("""
-                arguments[0].style.border = '5px solid green';
-                arguments[0].classList.remove('disabled');
-                arguments[0].click();
-            """, save_btn)
-            return True
+        for el in save_elements:
+            if el.text.strip() == "Save":
+                print(f"   🚀 Found inner Save div. Triggering Deep Click...")
+                
+                # Visual Debug
+                driver.execute_script("arguments[0].style.border='5px solid green';", el)
+                
+                # We click the inner element and then the outer one just to be safe
+                driver.execute_script("""
+                    let inner = arguments[0];
+                    let outer = inner.parentElement;
+                    
+                    // Remove any 'disabled' classes from both
+                    inner.classList.remove('disabled');
+                    if(outer) outer.classList.remove('disabled');
+                    
+                    // Trigger the click on the interactive element
+                    inner.click();
+                    
+                    // Dispatch 'Enter' key event as a backup (common for chatbots)
+                    inner.dispatchEvent(new KeyboardEvent('keydown', {'key': 'Enter'}));
+                """, el)
+                
+                return True
 
     except Exception as e:
         print(f"   [!] Interaction error: {e}")
     
-    return False
-    
+    return False    
 def handle_questionnaire(driver, job_idx):
     """
     Sequence: 
