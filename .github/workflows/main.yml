@@ -22,46 +22,40 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # Prevent hangs
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'  # Updated for stability[web:32]
+          python-version: '3.12'
           
-      - name: Install dependencies
+      - name: Install dependencies + Chrome
         run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable  # Ubuntu Chrome[web:32]
           pip install --upgrade pip
-          pip install selenium selenium-stealth python-dotenv webdriver-manager  # Added for auto ChromeDriver[web:35]
-          
-      - name: Setup Chrome & ChromeDriver
-        uses: nanasess/setup-chromedriver@v2  # Auto-matches Chrome, handles ubuntu[web:32][web:34]
-        with:
-          chromedriver-version: 'stable'
+          pip install selenium selenium-stealth python-dotenv webdriver-manager
           
       - name: Create output dir
-        run: mkdir -p output  # For screenshots
-        
+        run: mkdir -p output
+      
       - name: Execute Script
         env:
           NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
-          CURRENT_CTC: ${{ secrets.CURRENT_CTC }}  # Add these secrets too!
+          CURRENT_CTC: ${{ secrets.CURRENT_CTC }}
           EXPECTED_CTC: ${{ secrets.EXPECTED_CTC }}
           NOTICE_PERIOD: ${{ secrets.NOTICE_PERIOD }}
           EXPERIENCE: ${{ secrets.EXPERIENCE }}
-        run: |
-          # Headless Chrome args for ubuntu[web:31][web:35]
-          export DISPLAY=:99
-          python apply_and_refresh.py  # Assumes your script uses service=Service() or webdriver-manager
-          
-      - name: Upload Debug Screenshots & Logs
+        run: python apply_and_refresh.py
+        
+      - name: Upload Debug Screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: naukri-debug-${{ github.run_id }}
           path: |
             output/*.png
-            ./*.log  # If you add logging
-          retention-days: 7  # Auto-delete old
+            ./*.log
+          retention-days: 7
