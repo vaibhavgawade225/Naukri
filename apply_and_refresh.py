@@ -60,6 +60,14 @@ def inject_cookies():
     except Exception as e:
         print(f"❌ Cookie Error: {e}")
 
+def save_screenshot(name):
+    """Saves a screenshot to a 'logs' folder for debugging."""
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    filename = f"logs/{name}_{int(time.time())}.png"
+    driver.save_screenshot(filename)
+    print(f"📸 Screenshot saved: {filename}")
+        
 # --- MAIN LOOP ---
 inject_cookies()
 
@@ -108,7 +116,9 @@ with open(csv_file, 'r') as file:
                 print("⚠️ Apply button not found (Page might have changed or role is closed).")
 
         except Exception as e:
-            # Updated to show the ACTUAL error for easier debugging
-            print(f"❌ Failed: {type(e).__name__}") 
+            error_type = type(e).__name__
+            print(f"❌ Failed: {error_type}")
+            # Capture what went wrong
+            save_screenshot(f"fail_{error_type}")
 
 driver.quit()
