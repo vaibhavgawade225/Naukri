@@ -16,25 +16,31 @@ MY_PROFILE_DATA = {
 }
 
 def process_single_step(driver):
-    """Fills questions and clicks the Save button without strict visibility checks."""
+    """
+    Specifically designed for the Naukri Chatbot seen in your 'Saved Jobs' screenshot.
+    """
     try:
         found_anything = False
         
-        # 1. FILL TEXT/NUMBER BOXES (Bypassing Visibility Check)
-        inputs = driver.find_elements(By.XPATH, "//input[not(@type='hidden') and not(@type='submit') and not(@type='radio') and not(@type='checkbox')] | //textarea")
+        # 1. Look for the Chatbot Container
+        # Naukri uses 'chatbot_main' for this floating window
+        chatbot_container = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')] | //div[@id='chatbot_main']")
+        
+        # 2. Fill Textbox (Targeting the 'For example' placeholder from your screenshot)
+        inputs = driver.find_elements(By.XPATH, "//input | //textarea")
         for field in inputs:
-            try:
-                html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
-                
-                val = "Yes"
+            placeholder = (field.get_attribute("placeholder") or "").lower()
+            html_ctx = driver.execute_script("return arguments[0].outerHTML + (arguments[0].parentElement ? arguments[0].parentElement.innerText : '');", field).lower()
+            
+            # Match based on the specific Chatbot prompts
+            if any(k in placeholder or k in html_ctx for k in ["experience", "years", "example", "ctc", "notice", "location"]):
+                val = MY_PROFILE_DATA["experience"] # Default
                 if "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
                 elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
                 elif "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-                elif "experience" in html_ctx: val = MY_PROFILE_DATA["experience"]
 
-                # Use pure JS to bypass "Element Not Interactable" errors on hidden React boxes
                 driver.execute_script("""
-                    arguments[0].style.border='2px solid blue';
+                    arguments[0].style.border='3px solid blue';
                     arguments[0].focus();
                     arguments[0].value = arguments[1];
                     arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
@@ -42,55 +48,42 @@ def process_single_step(driver):
                     arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
                 """, field, str(val))
                 found_anything = True
-            except:
-                continue
 
-        # 2. CLICK RADIO BUTTONS (Bypassing Visibility Check)
-        options = driver.find_elements(By.XPATH, "//label | //span | //li")
-        for opt in options:
+        # 3. Handle Radio Buttons (Yes/No/Notice Period options)
+        labels = driver.find_elements(By.XPATH, "//label | //span[contains(@class, 'text')] | //div[contains(@class, 'radio')]")
+        for label in labels:
+            txt = label.text.strip().lower()
+            if txt and any(k == txt or f" {k} " in f" {txt} " for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
+                driver.execute_script("arguments[0].style.border='3px solid red'; arguments[0].click();", label)
+                found_anything = True
+
+        # 4. CLICK THE CHATBOT 'SAVE' BUTTON (The Big Blue Button)
+        time.sleep(1.5)
+        # Targeted XPATH for the button at the bottom of the chat window
+        save_buttons = driver.find_elements(By.XPATH, """
+            //div[contains(@class, 'chatbot')]//button[contains(text(), 'Save')] | 
+            //div[contains(@class, 'chatbot')]//button[contains(text(), 'Next')] |
+            //button[contains(@class, 'saveBtn')] |
+            //div[@id='chatbot_main']//button
+        """)
+
+        for btn in save_buttons:
             try:
-                txt = opt.text.strip().lower()
-                # Skip empty text elements to save time
-                if not txt: continue 
-                
-                if any(k == txt or f" {k} " in f" {txt} " for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
-                    driver.execute_script("arguments[0].style.border='2px solid red'; arguments[0].click();", opt)
-                    found_anything = True
-            except:
-                continue
-
-        # 3. CLICK THE CORRECT SAVE BUTTON
-        time.sleep(1.5) # Wait a moment for React to register the typing/clicking
-        form_buttons = driver.find_elements(By.XPATH, "//button | //input[@type='submit'] | //input[@type='button']")
-
-        for btn in form_buttons:
-            try:
-                btn_text = (btn.text or btn.get_attribute("value") or "").lower()
-                
-                # Check if it is a relevant button
-                if any(word in btn_text for word in ["save", "next", "continue", "submit"]):
-                    
-                    # CRITICAL CHECK: Ignore the button if it is part of the JD Header (Top of the page)
-                    is_main_page_save = driver.execute_script("""
-                        let el = arguments[0];
-                        return !!el.closest('.jd-header-comp') || !!el.closest('.jd-header');
-                    """, btn)
-                    
-                    if is_main_page_save:
-                        continue # Skip the wrong button!
-
-                    print(f"   🎯 Questionnaire Button Found: {btn_text}")
-                    driver.execute_script("""
-                        arguments[0].style.border='5px solid green'; 
-                        arguments[0].removeAttribute('disabled');
-                        arguments[0].click();
-                    """, btn)
-                    return True # Clicked successfully, exit the step
-            except:
-                continue
+                # Ensure we only click the one that is visible and in the foreground
+                if btn.is_displayed() and btn.size['width'] > 0:
+                    btn_text = btn.text.strip().lower()
+                    if any(word in btn_text for word in ["save", "next", "continue", "submit"]):
+                        print(f"   🚀 Clicking Chatbot Button: {btn.text}")
+                        driver.execute_script("""
+                            arguments[0].style.border='5px solid green';
+                            arguments[0].removeAttribute('disabled');
+                            arguments[0].click();
+                        """, btn)
+                        return True # Exit step successfully
+            except: continue
                 
     except Exception as e:
-        print(f"   [!] Step Error: {e}")
+        print(f"   [!] Chatbot Step Error: {e}")
         
     return False
 
