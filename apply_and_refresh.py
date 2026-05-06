@@ -20,7 +20,7 @@ def process_single_step(driver):
     try:
         found_anything = False
         
-        # 1. Fill Textboxes (Blue Highlight)
+        # 1. Fill Textboxes
         inputs = driver.find_elements(By.XPATH, "//input[@type='text'] | //input[@type='number'] | //textarea")
         for field in inputs:
             if not field.is_displayed(): continue
@@ -38,7 +38,7 @@ def process_single_step(driver):
             driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
             found_anything = True
 
-        # 2. Click Radios (Red Highlight)
+        # 2. Click Radios
         labels = driver.find_elements(By.XPATH, "//label | //span[contains(@class, 'label')] | //div[contains(@class, 'radio')]")
         for label in labels:
             if not label.is_displayed(): continue
@@ -49,13 +49,11 @@ def process_single_step(driver):
                 found_anything = True
                 time.sleep(0.5)
 
-        # 3. CLICK THE FORM SAVE BUTTON (Green Highlight)
-        # We look specifically for buttons that appear AFTER the Apply click
+        # 3. CLICK THE FORM SAVE BUTTON
         time.sleep(1)
-        # Targeted XPATH to avoid the main page 'Save' button
+        # Targeted XPATH to find buttons specifically in footers/popups
         buttons = driver.find_elements(By.XPATH, "//div[contains(@class, 'bottum')]//button | //div[contains(@class, 'footer')]//button | //button[contains(@class, 'submit')] | //button[contains(@class, 'save-and-continue')]")
         
-        # Fallback if targeted XPATH fails
         if not buttons:
             buttons = driver.find_elements(By.XPATH, "//button")
 
@@ -63,9 +61,9 @@ def process_single_step(driver):
             if not btn.is_displayed(): continue
             btn_text = btn.text.lower()
             
-            # CRITICAL: We only click if it's a Save/Submit/Next and NOT the one next to Apply
+            # Logic to ignore the 'Save Job' button on the main page
             if any(word in btn_text for word in ["save", "submit", "next", "continue"]):
-                # Avoid the 'Save Job' button on the JD page
+                # Skip the button if it's the 'Save' button sitting at the top near Apply
                 if "save" == btn_text.strip() and btn.location['y'] < 500: 
                     continue 
 
@@ -97,29 +95,44 @@ def handle_questionnaire(driver, job_idx):
         if not success: break
 
 def run_automation():
-    # ... (Setup code same as before) ...
+    print("🚀 Starting Selenium Full Script...")
+    cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
+    
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
+    
     driver = webdriver.Chrome(options=options)
-    stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
+    stealth(driver, 
+            languages=["en-US", "en"], 
+            vendor="Google Inc.", 
+            platform="Win32", 
+            webgl_vendor="Intel Inc.", 
+            renderer="Intel Iris OpenGL Engine", 
+            fix_hairline=True)
 
     try:
         driver.get("https://www.naukri.com/")
-        # ... (Cookie injection same as before) ...
         if cookie_raw:
             for item in cookie_raw.split(';'):
                 if '=' in item:
                     n, v = item.strip().split('=', 1)
-                    driver.add_cookie({'name': n, 'value': v, 'domain': '.naukri.com', 'path': '/'})
+                    driver.add_cookie({'name': n.strip(), 'value': v.strip(), 'domain': '.naukri.com', 'path': '/'})
             driver.refresh()
             time.sleep(5)
 
         driver.get("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f")
         time.sleep(8)
         
-        job_links = [l.get_attribute('href') for l in driver.find_elements(By.XPATH, "//a[contains(@href, 'job-listings-')]")]
+        job_links = []
+        links = driver.find_elements(By.XPATH, "//a[contains(@href, 'job-listings-')]")
+        for link in links:
+            href = link.get_attribute('href')
+            if href and href not in job_links:
+                job_links.append(href)
+
         print(f"Found {len(job_links)} jobs.")
 
         applied = 0
@@ -128,17 +141,13 @@ def run_automation():
                 driver.get(link)
                 time.sleep(7)
                 
-                # 1. FIND AND CLICK APPLY ONLY
+                if "already applied" in driver.page_source.lower():
+                    continue
+
                 apply_btns = driver.find_elements(By.XPATH, "//button[text()='Apply' or contains(text(),'Apply')]")
                 if apply_btns and apply_btns[0].is_displayed():
-                    # Check if already applied first
-                    if "already applied" in driver.page_source.lower():
-                        continue
-                        
                     print(f"✅ Job {idx+1}: Clicking Apply...")
                     driver.execute_script("arguments[0].click();", apply_btns[0])
-                    
-                    # 2. NOW HANDLE QUESTIONNAIRE
                     handle_questionnaire(driver, idx+1)
                     applied += 1
                 
