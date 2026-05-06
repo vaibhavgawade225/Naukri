@@ -22,23 +22,46 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # Prevent hangs
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'  # Updated for stability[web:32]
+          
       - name: Install dependencies
-        run: pip install selenium selenium-stealth
+        run: |
+          pip install --upgrade pip
+          pip install selenium selenium-stealth python-dotenv webdriver-manager  # Added for auto ChromeDriver[web:35]
+          
+      - name: Setup Chrome & ChromeDriver
+        uses: nanasess/setup-chromedriver@v2  # Auto-matches Chrome, handles ubuntu[web:32][web:34]
+        with:
+          chromedriver-version: 'stable'
+          
+      - name: Create output dir
+        run: mkdir -p output  # For screenshots
+        
       - name: Execute Script
         env:
           NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
-        run: python apply_and_refresh.py
-      
-      # THIS SECTION ADDS THE SCREENSHOTS
-      - name: Upload Debug Screenshots
+          CURRENT_CTC: ${{ secrets.CURRENT_CTC }}  # Add these secrets too!
+          EXPECTED_CTC: ${{ secrets.EXPECTED_CTC }}
+          NOTICE_PERIOD: ${{ secrets.NOTICE_PERIOD }}
+          EXPERIENCE: ${{ secrets.EXPERIENCE }}
+        run: |
+          # Headless Chrome args for ubuntu[web:31][web:35]
+          export DISPLAY=:99
+          python apply_and_refresh.py  # Assumes your script uses service=Service() or webdriver-manager
+          
+      - name: Upload Debug Screenshots & Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: naukri-apply-debug
-          path: ./*.png  # Added ./ to ensure it looks in the current directory
+          name: naukri-debug-${{ github.run_id }}
+          path: |
+            output/*.png
+            ./*.log  # If you add logging
+          retention-days: 7  # Auto-delete old
