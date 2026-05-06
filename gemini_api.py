@@ -1,20 +1,8 @@
-"""
-Install the Google AI Python SDK
-
-$ pip install google-generativeai
-
-See the getting started guide for more information:
-https://ai.google.dev/gemini-api/docs/get-started/python
-"""
-
 import os
-
 import google.generativeai as genai
 
 genai.configure(api_key=os.environ.get('GEMINI_KEY'))
 
-# Create the model
-# See https://ai.google.dev/api/python/google/generativeai/GenerativeModel
 generation_config = {
   "temperature": 1,
   "top_p": 0.95,
@@ -26,67 +14,39 @@ generation_config = {
 model = genai.GenerativeModel(
   model_name="gemini-1.5-flash",
   generation_config=generation_config,
-  # safety_settings = Adjust safety settings
-  # See https://ai.google.dev/gemini-api/docs/safety-settings
-  system_instruction="remember all this when asked question you will answer from this data.\n"
-                     "be concise only answer in max 5 words, average of 2 words, min of 1 word\n, "
-                     "if it is a multi option question only give the index number of the answer",
+  system_instruction="You are a job application assistant. Use the provided user data to answer chatbot questions concisely (1-5 words). For multiple choice, only provide the index number.",
 )
 
-chat_session = model.start_chat(
-  history=[
-    {
-      "role": "user",
-      "parts": [
-        "{
+# FIXED: Using triple quotes for the JSON block to avoid EOL SyntaxErrors
+user_data_json = """
+{
   "name": "Shuhbam Rajput",
-  "contact": {
-    "phone": "8180030015",
-    "email": "shubham.prajval@gmail.com"
-  },
+  "contact": {"phone": "8180030015", "email": "shubham.prajval@gmail.com"},
   "summary": {
-    "total_experience": "2 year",
+    "total_experience": "2 years",
     "current_ctc": "3 LPA",
     "expected_ctc": "5 LPA",
     "notice_period": "Immediate",
     "current_location": "Pune",
     "preferred_location": "Mumbai/Pune"
   },
-  "skills": {
-    "Java": "2 years",
-    "Spring Boot": "2 year",
-    "opretions": "2 year",
-    "SQL": "2 years"
-  }
-}",
-      ],
-    },
-    {
-      "role": "model",
-      "parts": [
-        "This is a well-structured JSON object representing a resume. It contains a wealth of information about a person named John Doe, covering:\n\n**Personal Details:**\n\n* Full Name\n* Last Name\n* Email\n* LinkedIn Profile\n* Mobile Number\n\n**Education:**\n\n* Details of two degrees, including:\n    * Institution\n    * Location\n    * Degree Name\n    * GPA\n    * Start Date\n    * End Date\n\n**Skills:**\n\n* Categorized into:\n    * Languages\n    * Frameworks\n    * Tools\n    * Platforms\n    * Soft Skills\n\n**Work Experience:**\n\n* One entry with:\n    * Position\n    * Company\n    * Start Date\n    * End Date\n    * Responsibilities (list of bullet points)\n    * Tech Experience (duration of specific skills used)\n    * Joining Date\n    * Notice Period\n\n**Projects:**\n\n* Two entries with:\n    * Name\n    * Type (Personal/Academic)\n    * Start Date\n    * End Date\n    * Description (list of bullet points)\n    * Tech Experience (duration of specific skills used)\n\n**Certifications:**\n\n* Two entries with:\n    * Name\n    * Date\n\n**Additional Information:**\n\n* List of bullet points providing additional insights.\n\n**Strengths of this JSON:**\n\n* **Well-organized:** Data is grouped logically and clearly.\n* **Structured:** Consistent use of key-value pairs and arrays for easy parsing.\n* **Comprehensive:** Covers important resume sections.\n* **Detailed:** Provides sufficient information about each item.\n\n**Possible Enhancements:**\n\n* **Job Descriptions:**  Add more details to the \"responsibilities\" section, highlighting achievements and quantifiable results.\n* **Project Links:** Include links to live projects or repositories on platforms like GitHub.\n* **",
-      ],
-    },
-    {
-      "role": "user",
-      "parts": [
-        "remember all this when asked question you will answer from this data.\nyou will answer using this data min 1 word, average 3 words , and max 5 words",
-      ],
-    },
-    {
-      "role": "model",
-      "parts": [
-        "Understood. I will use the provided JSON data to answer your questions. I will aim for a minimum of one word, an average of three words, and a maximum of five words in my responses. \n",
-      ],
-    },
+  "skills": {"Java": "2 years", "Spring Boot": "2 years", "Operations": "2 years", "SQL": "2 years"}
+}
+"""
+
+chat_session = model.start_chat(
+  history=[
+    {"role": "user", "parts": [user_data_json]},
+    {"role": "model", "parts": ["Understood. I have your profile details and will answer questions based on them."]},
+    {"role": "user", "parts": ["Remember: answers must be 1-5 words. For options, give only the number."]},
+    {"role": "model", "parts": ["Confirmed. I will provide short answers or index numbers only."]}
   ]
 )
 
-
 def bard_flash_response(question) -> str:
     try:
-      response = chat_session.send_message(question)
-      return response.text
+      response = chat_session.send_message(str(question))
+      return response.text.strip()
     except Exception as e:
-      print(f"An error occurred: {e}")
-      return 0
+      print(f"AI Error: {e}")
+      return "1" # Default to 1 to keep the script moving
