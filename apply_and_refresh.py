@@ -16,77 +16,52 @@ async def fill_inputs_in_all_frames(page, job_idx, step):
     found_any = False
     for frame in page.frames:
         try:
-            # Targeted selector for interactive inputs
+            # Broad search for any interactive element
             inputs = frame.locator("input:not([type='hidden']), textarea, select")
             count = await inputs.count()
-            
             for i in range(count):
                 field = inputs.nth(i)
-                if not await field.is_visible():
-                    continue
-                
-                found_any = True
-                html_context = await field.evaluate("el => el.outerHTML + (el.parentElement ? el.parentElement.innerText : '')")
-                ctx = html_context.lower()
-
-                field_type = await field.get_attribute("type")
-                
-                if field_type == "radio":
-                    if any(k in ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
-                        await field.click(force=True)
-                
-                elif await field.evaluate("el => ['INPUT', 'TEXTAREA'].includes(el.tagName)"):
-                    val = "Yes" 
-                    if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
-                    elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
-                    elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
-                    elif "experience" in ctx: val = MY_PROFILE_DATA["experience"]
-                    
-                    await field.click()
-                    await field.fill(val)
-                    await field.press("Tab")
-        except:
-            continue
+                if await field.is_visible():
+                    found_any = True
+                    ctx = await field.evaluate("el => el.outerHTML + (el.parentElement ? el.parentElement.innerText : '')")
+                    ctx = ctx.lower()
+                    if await field.get_attribute("type") == "radio":
+                        if any(k in ctx for k in ["15", "immediate", "yes", "willing", "relocate", "agree"]):
+                            await field.click(force=True)
+                    elif await field.evaluate("el => ['INPUT', 'TEXTAREA'].includes(el.tagName)"):
+                        val = "Yes"
+                        if "current" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["current_ctc"]
+                        elif "expected" in ctx and "ctc" in ctx: val = MY_PROFILE_DATA["expected_ctc"]
+                        elif "notice" in ctx: val = MY_PROFILE_DATA["notice_period"]
+                        elif "experience" in ctx: val = MY_PROFILE_DATA["experience"]
+                        await field.fill(val)
+                        await field.press("Tab")
+        except: continue
     return found_any
 
 async def handle_questionnaire(page, job_idx):
-    try:
-        for step in range(1, 6):
-            await page.wait_for_timeout(5000)
-            await page.screenshot(path=f"JOB_{job_idx}_STEP_{step}_START.png")
-
-            if not await fill_inputs_in_all_frames(page, job_idx, step):
-                print(f"   [Step {step}] No inputs found.")
-                break
-
-            btn_clicked = False
-            for frame in page.frames:
-                # Optimized button finder
-                submit_btn = frame.locator("button").filter(has_text=re.compile(r"save|submit|next|apply", re.IGNORECASE)).first
-                if await submit_btn.is_visible():
-                    await submit_btn.click()
-                    print(f"   🚀 Clicked Submit/Next in frame.")
-                    btn_clicked = True
-                    break
-            
-            if not btn_clicked:
-                break
-    except Exception as e:
-        print(f"   [!] Questionnaire Error: {e}")
+    for step in range(1, 6):
+        await page.wait_for_timeout(4000)
+        await page.screenshot(path=f"JOB_{job_idx}_STEP_{step}_START.png")
+        if not await fill_inputs_in_all_frames(page, job_idx, step): break
+        btn_clicked = False
+        for frame in page.frames:
+            submit_btn = frame.locator("button").filter(has_text=re.compile(r"save|submit|next|apply", re.IGNORECASE)).first
+            if await submit_btn.is_visible():
+                await submit_btn.click()
+                btn_clicked = True; break
+        if not btn_clicked: break
 
 async def run_automation():
     async with async_playwright() as p:
-        print("🚀 Starting Corrected Playwright Bot...")
+        print("🚀 Starting Refined Playwright Bot...")
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        )
+        context = await browser.new_context(viewport={'width': 1280, 'height': 800})
         page = await context.new_page()
 
-        # Login
+        # Cookie Login
         cookie_raw = os.environ.get('NAUKRI_COOKIE', '').strip()
-        await page.goto("https://www.naukri.com/")
+        await page.goto("https://www.naukri.com/", wait_until="networkidle")
         if cookie_raw:
             for item in cookie_raw.split(';'):
                 if '=' in item:
@@ -94,35 +69,37 @@ async def run_automation():
                     await context.add_cookies([{'name': n.strip(), 'value': v.strip(), 'domain': '.naukri.com', 'path': '/'}])
             await page.reload()
 
-        # Job Search
-        await page.goto("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f")
+        # Search Page
+        search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?experience=0&experience=1&experience=2&sort=f"
+        await page.goto(search_url, wait_until="networkidle")
         await page.wait_for_timeout(5000)
         
-        # --- FIXED LINK EXTRACTION ---
-        locators = page.locator("a.title")
-        job_links = []
-        for i in range(await locators.count()):
-            href = await locators.nth(i).get_attribute("href")
-            if href: job_links.append(href)
+        # DEBUG: Take a screenshot of the search results to see if we are blocked
+        await page.screenshot(path="SEARCH_RESULTS_DEBUG.png")
+
+        # UPDATED LINK SELECTOR: Looking for any link that looks like a job description
+        job_links = await page.evaluate('''() => {
+            return Array.from(document.querySelectorAll('a'))
+                .map(a => a.href)
+                .filter(href => href.includes('job-listings-'))
+        }''')
         
+        # Remove duplicates
+        job_links = list(set(job_links))
         print(f"Found {len(job_links)} jobs.")
 
         applied = 0
-        for idx, link in enumerate(job_links[:15]):
+        for idx, link in enumerate(job_links[:10]):
             try:
-                await page.goto(link)
-                await page.wait_for_timeout(6000)
-
-                if "already applied" in (await page.content()).lower():
-                    continue
-
-                apply_btn = page.get_by_role("button", name="Apply", exact=True).first
+                await page.goto(link, wait_until="networkidle")
+                await page.wait_for_timeout(5000)
+                if "already applied" in (await page.content()).lower(): continue
+                apply_btn = page.locator("button:has-text('Apply')").first
                 if await apply_btn.is_visible():
                     print(f"✅ Job {idx+1}: Applying...")
                     await apply_btn.click()
                     await handle_questionnaire(page, idx+1)
                     applied += 1
-                
                 if applied >= 5: break
             except: continue
 
