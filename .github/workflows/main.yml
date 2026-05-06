@@ -22,40 +22,23 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          
-      - name: Install dependencies + Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable  # Ubuntu Chrome[web:32]
-          pip install --upgrade pip
-          pip install selenium selenium-stealth python-dotenv webdriver-manager
-          
-      - name: Create output dir
-        run: mkdir -p output
-      
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install selenium selenium-stealth
       - name: Execute Script
         env:
           NAUKRI_COOKIE: ${{ secrets.NAUKRI_COOKIE }}
-          CURRENT_CTC: ${{ secrets.CURRENT_CTC }}
-          EXPECTED_CTC: ${{ secrets.EXPECTED_CTC }}
-          NOTICE_PERIOD: ${{ secrets.NOTICE_PERIOD }}
-          EXPERIENCE: ${{ secrets.EXPERIENCE }}
         run: python apply_and_refresh.py
-        
+      
+      # THIS SECTION ADDS THE SCREENSHOTS
       - name: Upload Debug Screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: naukri-debug-${{ github.run_id }}
-          path: |
-            output/*.png
-            ./*.log
-          retention-days: 7
+          name: naukri-apply-debug
+          path: ./*.png  # Added ./ to ensure it looks in the current directory
