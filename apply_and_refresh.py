@@ -39,19 +39,57 @@ stealth(driver,
         fix_hairline=True)
 
 def inject_cookies():
-    """Injects cookies to bypass login using your GitHub Secret."""
+    """Smarter cookie injection that handles both JSON and raw text formats."""
+    print("🔄 Attempting to inject cookies...")
     driver.get("https://www.naukri.com/")
-    time.sleep(2)
+    time.sleep(3)
+    
     cookies_raw = os.environ.get('NAUKRI_COOKIE')
-    if cookies_raw:
-        try:
+    
+    if not cookies_raw:
+        print("❌ No cookies found in GitHub Secrets (NAUKRI_COOKIE is empty).")
+        return
+
+    try:
+        cookies_raw = cookies_raw.strip()
+        
+        # LOGIC 1: If it looks like a JSON array (e.g., from EditThisCookie)
+        if cookies_raw.startswith('['):
             cookies = json.loads(cookies_raw)
             for cookie in cookies:
-                driver.add_cookie(cookie)
-            driver.refresh()
-            print("🍪 Cookies injected successfully.")
-        except Exception as e:
-            print(f"❌ Cookie Error: {e}")
+                # Safely extract only what Selenium needs
+                cookie_dict = {
+                    'name': cookie.get('name'),
+                    'value': cookie.get('value'),
+                    'domain': cookie.get('domain', '.naukri.com'),
+                    'path': cookie.get('path', '/')
+                }
+                driver.add_cookie(cookie_dict)
+                
+        # LOGIC 2: If it's a raw header string (e.g., "NID=123; session=abc")
+        else:
+            print("⚠️ Cookies are not in JSON format. Parsing as raw text...")
+            cookie_pairs = cookies_raw.split(';')
+            for pair in cookie_pairs:
+                if '=' in pair:
+                    name, value = pair.strip().split('=', 1)
+                    driver.add_cookie({
+                        'name': name.strip(), 
+                        'value': value.strip(), 
+                        'domain': '.naukri.com'
+                    })
+                    
+        driver.refresh()
+        time.sleep(3)
+        
+        # Verify if login was successful by checking for a common logged-in element
+        if "login" not in driver.current_url.lower():
+            print("🍪 Cookies injected and login verified successfully!")
+        else:
+            print("⚠️ Cookies injected, but Naukri still shows the login page. They might be expired.")
+
+    except Exception as e:
+        print(f"❌ Cookie Logic Error: {e}")
 
 def force_save_click():
     """Precision click for the 'Save' button."""
