@@ -16,11 +16,14 @@ MY_PROFILE_DATA = {
 }
 
 def process_single_step(driver):
-    """Fills questions and clicks ONLY the Save button inside the questionnaire."""
+    """
+    Fills questions and clicks ONLY the Save button inside the questionnaire.
+    It explicitly ignores the 'Save Job' button next to the Apply button.
+    """
     try:
         found_anything = False
         
-        # 1. Fill Textboxes
+        # 1. FILL TEXT/NUMBER BOXES
         inputs = driver.find_elements(By.XPATH, "//input[@type='text'] | //input[@type='number'] | //textarea")
         for field in inputs:
             if not field.is_displayed(): continue
@@ -38,36 +41,46 @@ def process_single_step(driver):
             driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
             found_anything = True
 
-        # 2. Click Radios
-        labels = driver.find_elements(By.XPATH, "//label | //span[contains(@class, 'label')] | //div[contains(@class, 'radio')]")
-        for label in labels:
-            if not label.is_displayed(): continue
-            txt = label.text.lower()
-            if any(k in txt for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
-                driver.execute_script("arguments[0].style.border='2px solid red';", label)
-                driver.execute_script("arguments[0].click();", label)
+        # 2. CLICK RADIO BUTTONS (Text-Based Search)
+        # We look for labels/spans containing the target answers
+        options = driver.find_elements(By.XPATH, "//label | //span | //li[contains(@class, 'list')]")
+        for opt in options:
+            if not opt.is_displayed(): continue
+            txt = opt.text.strip().lower()
+            if any(k == txt or k in txt for k in ["15", "immediate", "yes", "willing", "relocate", "agree", "confirm"]):
+                driver.execute_script("arguments[0].style.border='2px solid red';", opt)
+                driver.execute_script("arguments[0].click();", opt)
                 found_anything = True
                 time.sleep(0.5)
 
-        # 3. CLICK THE FORM SAVE BUTTON
+        # 3. CLICK THE CORRECT SAVE BUTTON
         time.sleep(1)
-        # Targeted XPATH to find buttons specifically in footers/popups
-        buttons = driver.find_elements(By.XPATH, "//div[contains(@class, 'bottum')]//button | //div[contains(@class, 'footer')]//button | //button[contains(@class, 'submit')] | //button[contains(@class, 'save-and-continue')]")
-        
-        if not buttons:
-            buttons = driver.find_elements(By.XPATH, "//button")
+        # Targeted XPATH: Find buttons ONLY inside the application popup/chatbot container
+        # This skips the 'Save Job' button in the main header
+        form_buttons = driver.find_elements(By.XPATH, """
+            //div[contains(@class, 'bot-footer')]//button | 
+            //div[contains(@class, 'drawer')]//button | 
+            //div[contains(@class, 'footer')]//button[not(contains(@class, 'save-job'))] |
+            //button[contains(@class, 'save-and-continue')] |
+            //button[contains(text(), 'Next')] |
+            //button[contains(text(), 'Submit')]
+        """)
 
-        for btn in buttons:
+        for btn in form_buttons:
             if not btn.is_displayed(): continue
-            btn_text = btn.text.lower()
             
-            # Logic to ignore the 'Save Job' button on the main page
-            if any(word in btn_text for word in ["save", "submit", "next", "continue"]):
-                # Skip the button if it's the 'Save' button sitting at the top near Apply
-                if "save" == btn_text.strip() and btn.location['y'] < 500: 
-                    continue 
+            # CRITICAL CHECK: Ignore the button if it is part of the JD Header
+            is_main_page_save = driver.execute_script("""
+                let el = arguments[0];
+                return !!el.closest('.jd-header-comp') || !!el.closest('.jd-header');
+            """, btn)
+            
+            if is_main_page_save:
+                continue # Skip this button! It's the wrong one.
 
-                print(f"   🎯 Form Button Found: {btn_text}")
+            btn_text = btn.text.lower()
+            if any(word in btn_text for word in ["save", "next", "continue", "submit"]):
+                print(f"   🎯 Questionnaire Button Found: {btn_text}")
                 driver.execute_script("arguments[0].style.border='5px solid green'; arguments[0].click();", btn)
                 return True
                 
