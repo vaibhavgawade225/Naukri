@@ -17,24 +17,19 @@ MY_PROFILE_DATA = {
 
 def process_single_step(driver):
     """
-    Precision targeting for the 'sendMsg' chatbot button found in manual inspection.
+    The main logic: Target ONLY the chatbot area and the specific 'sendMsg' Save button.
     """
     try:
-        # 1. FILL THE TEXT BOX (Like the '7' for notice period in your screenshot)
-        # We target inputs specifically inside the chatbot/neo-agent container
-        inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//input | //div[contains(@id, 'chatbot')]//input | //input[contains(@placeholder, 'example')]")
-        
+        # 1. Fill Textbox (Notice Period/CTC/Exp)
+        # Using the specific 'example' placeholder check from your screenshot
+        inputs = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//input | //input[contains(@placeholder, 'example')]")
         for field in inputs:
             if not field.is_displayed(): continue
-            
-            # Get specific value based on context
-            html_ctx = driver.execute_script("return (arguments[0].outerHTML + arguments[0].parentElement.innerText).toLowerCase();", field)
-            val = MY_PROFILE_DATA["experience"]
+            val = MY_PROFILE_DATA["experience"] # Default
+            # Context-aware values
+            html_ctx = (field.get_attribute("placeholder") or "").lower()
             if "notice" in html_ctx: val = MY_PROFILE_DATA["notice_period"]
-            elif "current" in html_ctx: val = MY_PROFILE_DATA["current_ctc"]
-            elif "expected" in html_ctx: val = MY_PROFILE_DATA["expected_ctc"]
-
-            # Use JS to set value and 'wake up' the Save button
+            
             driver.execute_script("""
                 arguments[0].focus();
                 arguments[0].value = arguments[1];
@@ -43,67 +38,82 @@ def process_single_step(driver):
             """, field, str(val))
             time.sleep(0.5)
 
-        # 2. SELECT RADIOS (Yes/No)
-        labels = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//label | //div[contains(@class, 'chatbot')]//span")
-        for label in labels:
-            txt = label.text.strip().lower()
-            if txt in ["yes", "immediate", "willing", "agree"]:
-                driver.execute_script("arguments[0].click();", label)
-                time.sleep(1)
+        # 2. Click Radio/Choice (Yes/No)
+        choices = driver.find_elements(By.XPATH, "//div[contains(@class, 'chatbot')]//label | //div[contains(@class, 'chatbot')]//span[contains(@class, 'text')]")
+        for opt in choices:
+            txt = opt.text.strip().lower()
+            if txt in ["yes", "immediate", "willing", "agree", "confirm"]:
+                driver.execute_script("arguments[0].click();", opt)
+                time.sleep(1) # Wait for Save button to enable
 
-        # 3. THE FIX: Click the 'sendMsg' Button
-        # We target the exact class you found in the inspector
-        save_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'sendMsg')] | //div[contains(@class, 'send')]")
+        # 3. CLICK THE SPECIFIC SAVE BUTTON (The id/class you provided)
+        # We target the 'sendMsg' div and ensure it only contains the word 'Save'
+        # This prevents clicking 'Send me jobs like this'
+        save_btn = None
+        btns = driver.find_elements(By.XPATH, "//div[contains(@class, 'sendMsg')] | //div[contains(@id, 'sendMsg')]")
         
-        for el in save_elements:
-            if "save" in el.text.lower() or "send" in el.text.lower() or el.get_attribute("tabindex") == "0":
-                print(f"   🚀 Found Chatbot Button: {el.text}. Triggering Click...")
-                
-                # Highlight for the screenshot debug
-                driver.execute_script("arguments[0].style.border='5px solid green';", el)
-                
-                # FORCE ENABLE & CLICK
-                driver.execute_script("""
-                    let btn = arguments[0];
-                    // Remove 'disabled' from the button or any of its children
-                    btn.classList.remove('disabled');
-                    let inner = btn.querySelector('.disabled');
-                    if(inner) inner.classList.remove('disabled');
-                    
-                    // Force the click
-                    btn.click();
-                """, el)
-                
-                # Backup physical click
-                try:
-                    ActionChains(driver).move_to_element(el).click().perform()
-                except: pass
-                
-                return True # Successfully finished this interaction
+        for b in btns:
+            if b.text.strip() == "Save":
+                save_btn = b
+                break
+        
+        if save_btn:
+            print(f"   🚀 Clicking the verified 'Save' div.")
+            driver.execute_script("""
+                arguments[0].style.border = '5px solid green';
+                arguments[0].classList.remove('disabled');
+                arguments[0].click();
+            """, save_btn)
+            return True
 
     except Exception as e:
-        print(f"   [!] Chatbot Error: {e}")
-        
+        print(f"   [!] Interaction error: {e}")
+    
     return False
     
 def handle_questionnaire(driver, job_idx):
-    for step in range(1, 11):
-        time.sleep(4)
+    """
+    Sequence: 
+    1. Wait for chatbot to load after Apply is clicked.
+    2. Loop: Fill one answer -> Click the specific 'Save' div.
+    """
+    print(f"   ⏳ Job {job_idx}: Waiting for chatbot/questionnaire to initialize...")
+    time.sleep(5) # Give the chatbot time to slide in after the Apply click
+    
+    for step in range(1, 15): # Support up to 15 questions
         driver.switch_to.default_content()
+        
+        # Take a screenshot BEFORE interacting to see the question
+        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_BEFORE.png")
+        
+        # Try to process the step (Fill Answer + Click the 'Save' div)
         success = process_single_step(driver)
         
+        # If not found in main content, check iframes (rare for chatbot but safe to keep)
         if not success:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for frame in iframes:
                 try:
                     driver.switch_to.frame(frame)
                     if process_single_step(driver):
-                        success = True; break
-                except: pass
-                finally: driver.switch_to.default_content()
+                        success = True
+                        break
+                except:
+                    pass
+                finally:
+                    driver.switch_to.default_content()
         
-        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}.png")
-        if not success: break
+        # Take a screenshot AFTER to verify the click/fill
+        driver.save_screenshot(f"JOB_{job_idx}_STEP_{step}_AFTER.png")
+        
+        if success:
+            print(f"   ✅ Step {step}: Answered and Clicked Save.")
+            time.sleep(3.5) # Wait for the next chatbot message to appear
+        else:
+            # If process_single_step returns False, it means no 'Save' button was found.
+            # This usually means the application is finished.
+            print(f"   🏁 Step {step}: No 'Save' button detected. Questionnaire likely finished.")
+            break
 
 def run_automation():
     print("🚀 Starting Selenium Full Script...")
