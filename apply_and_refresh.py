@@ -10,10 +10,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium_stealth import stealth
-from gemini_api import bard_flash_response
 
 # --- CLEAN LOGS ---
-warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # --- CONFIG ---
@@ -55,43 +54,36 @@ def inject_cookies():
     except Exception as e: print(f"❌ Cookie Error: {e}")
 
 def get_job_links():
-    """Logic to search and fetch latest Java jobs in Pune/Mumbai (0-2 Yrs)"""
     print("🔍 Searching for Java Developer jobs (Pune/Mumbai, 0-2 Yrs)...")
-    # This URL specifically targets Java, Mumbai/Pune, 0-2 Exp, sorted by Date
     search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d"
     driver.get(search_url)
     time.sleep(5)
-    
     links = []
     job_elements = driver.find_elements(By.CSS_SELECTOR, "a.title")
     for el in job_elements:
         href = el.get_attribute("href")
         if href and "/job-listings" in href:
             links.append(href)
-    
     print(f"🎯 Found {len(links)} potential jobs.")
-    return links[:20] # Take the top 20 latest
+    return links[:20]
 
 # --- START AUTOMATION ---
 inject_cookies()
 job_links = get_job_links()
 
 for job_url in job_links:
-    if applied_count >= MAX_APPLIES:
-        print("🏁 Limit reached. Stopping.")
-        break
+    if applied_count >= MAX_APPLIES: break
     
-    print(f"🚀 Visiting: {job_url.split('/')[-1]}")
+    print(f"🚀 Visiting: {job_url.split('/')[-1][:50]}...")
     driver.get(job_url)
     time.sleep(4)
 
     try:
-        # Check already applied
         if "already applied" in driver.page_source.lower():
             print("⏩ Already applied.")
             continue
 
-        # Find and Click Apply
+        # FIND APPLY BUTTON
         apply_selectors = ["//button[contains(text(),'Apply')]", "//span[contains(text(),'Apply')]", "//button[@id='apply-button']"]
         apply_btn = None
         for selector in apply_selectors:
@@ -101,38 +93,63 @@ for job_url in job_links:
             except: continue
 
         if apply_btn:
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", apply_btn)
+            time.sleep(1)
             driver.execute_script("arguments[0].click();", apply_btn)
+            print("🖱️ Apply clicked.")
             time.sleep(5)
 
-            # --- AI CHATBOT LOGIC ---
-            while True:
-                if "successfully applied" in driver.page_source.lower():
+            # --- UPDATED CHATBOT LOGIC ---
+            start_time = time.time()
+            while time.time() - start_time < 45: # Increased timeout for multi-step bots
+                if "successfully applied" in driver.page_source.lower() or "application submitted" in driver.page_source.lower():
                     applied_count += 1
-                    print(f"🎉 Success! Applied Count: {applied_count}")
+                    print(f"🎉 Applied! (Total: {applied_count})")
                     break
                 
-                # Check for Radios
+                # 1. Multiple Choice: Always pick option 1
                 radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
                 if radios:
-                    q_text = driver.find_element(By.XPATH, "//li[contains(@class, 'botItem')]").text
-                    ans_idx = int(bard_flash_response(f"Q: {q_text} Options: {[r.text for r in radios]}"))
-                    driver.execute_script("arguments[0].click();", radios[ans_idx-1].find_element(By.TAG_NAME, "input"))
+                    print("🤖 Chatbot: Picking option 1.")
+                    driver.execute_script("arguments[0].click();", radios[0].find_element(By.TAG_NAME, "input"))
                     time.sleep(2)
+                    try:
+                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg') and text()='Save']")
+                        driver.execute_script("arguments[0].click();", save_btn)
+                    except: pass
                     continue
 
-                # Check for Text Areas
+                # 2. Text/Logical Questions: Type "yes" or "2"
                 text_areas = driver.find_elements(By.CLASS_NAME, "textArea")
                 if text_areas:
-                    q_text = driver.find_elements(By.TAG_NAME, "li")[-1].text
-                    ans = bard_flash_response(q_text)
+                    # Logic: If it looks like an experience question, use "2", otherwise use "yes"
+                    question_context = driver.page_source.lower()
+                    if "experience" in question_context or "years" in question_context:
+                        ans = "2"
+                    else:
+                        ans = "yes"
+                    
+                    print(f"🤖 Chatbot: Entering '{ans}'.")
                     text_areas[0].send_keys(ans)
-                    time.sleep(2)
+                    time.sleep(1)
+                    try:
+                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg') and text()='Save']")
+                        driver.execute_script("arguments[0].click();", save_btn)
+                    except: pass
                     continue
                 
-                break # Exit if no bot found
+                # 3. Final Fallback: Just click 'Save' if it's there but bot is stuck
+                try:
+                    save_btn = driver.find_element(By.XPATH, "//div[text()='Save']")
+                    if save_btn.is_displayed():
+                        driver.execute_script("arguments[0].click();", save_btn)
+                        time.sleep(2)
+                        continue
+                except: pass
+
+                break 
         else:
             print("⚠️ No apply button found.")
-            save_screenshot("missing_btn")
 
     except Exception as e:
         print(f"❌ Failed: {type(e).__name__}")
