@@ -55,23 +55,31 @@ def inject_cookies():
     except Exception as e: print(f"❌ Cookie Error: {e}")
 
 def get_job_links():
-    print("🔍 Searching for Java Developer jobs (Pune ONLY, 0-2 Yrs)...")
-    # Clean URL: Removed Mumbai, kept Java, 0-2 Yrs, and Sort by Date
+    print("🔍 Searching for Java Developer jobs in Pune (0-2 Yrs)...")
+    # This format is more stable for Selenium scraping
     search_url = "https://www.naukri.com/java-developer-jobs-in-pune?k=java%20developer&l=pune&experience=0&sort=d"
     
     driver.get(search_url)
-    time.sleep(5) # Wait for search results to load
+    time.sleep(7) # Increased wait to ensure the job cards render
     
     links = []
-    # Fetch job titles which contain the links
-    job_elements = driver.find_elements(By.CSS_SELECTOR, "a.title")
-    for el in job_elements:
-        href = el.get_attribute("href")
-        if href and "/job-listings" in href:
-            links.append(href)
+    try:
+        # Naukri sometimes uses different classes for titles; this catches the most common ones
+        job_elements = driver.find_elements(By.XPATH, "//a[contains(@class, 'title')]")
+        
+        for el in job_elements:
+            href = el.get_attribute("href")
+            if href and "/job-listings" in href:
+                links.append(href)
+    except Exception as e:
+        print(f"⚠️ Scrape Error: {e}")
+
+    if not links:
+        print("❌ Still 0 jobs found. Check if Naukri is showing a Captcha or Login wall.")
+        save_screenshot("search_empty_results")
             
-    print(f"🎯 Found {len(links)} potential jobs in Pune.")
-    return links[:20] # Returns the 20 freshest jobs
+    print(f"🎯 Found {len(links)} potential jobs.")
+    return links[:20]
 
 # --- START AUTOMATION ---
 inject_cookies()
