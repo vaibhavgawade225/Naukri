@@ -21,7 +21,7 @@ def save_screenshot(driver, name):
     print(f"📸 Screenshot saved: {path}")
 
 def handle_questionnaire(driver, job_idx):
-    """JobSailor Logic: Fills chatbot forms without AI and tracks success/failure."""
+    """JobSailor Logic: Fills chatbot forms with ultra-robust Save execution."""
     status = True
     loop_guard = 0
     last_question = ""
@@ -47,6 +47,23 @@ def handle_questionnaire(driver, job_idx):
             last_question = current_q
         except: pass
 
+        # --- Helper function to click Save robustly ---
+        def force_click_save():
+            save_xpaths = [
+                "//span[text()='Save']",
+                "//button[contains(text(), 'Save')]",
+                "//div[contains(@class, 'sendMsg')]",
+                "//div[contains(@class, 'bot-send')]",
+                "/html/body/div[2]/div/div[1]/div[3]/div/div" # Fallback JobSailor
+            ]
+            for xp in save_xpaths:
+                try:
+                    btn = driver.find_element(By.XPATH, xp)
+                    driver.execute_script("arguments[0].click();", btn)
+                    return True
+                except: continue
+            return False
+
         # 3. FILL QUESTIONS & SAVE
         try:
             # Handle Radio Buttons
@@ -56,10 +73,7 @@ def handle_questionnaire(driver, job_idx):
                 first_input = radios[0].find_element(By.CSS_SELECTOR, "input")
                 driver.execute_script("arguments[0].click();", first_input)
                 time.sleep(1)
-                
-                # JobSailor's Save Button XPath
-                save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div | //div[contains(@class, 'sendMsg')]")
-                driver.execute_script("arguments[0].click();", save_btn)
+                force_click_save() # Try all save buttons
                 continue
 
             # Handle Text Areas
@@ -68,15 +82,19 @@ def handle_questionnaire(driver, job_idx):
                 print("🤖 Entering fallback text...")
                 txt_field = text_areas[0].find_element(By.TAG_NAME, "input") if text_areas[0].find_elements(By.TAG_NAME, "input") else text_areas[0]
                 ans = "2" if "experience" in driver.page_source.lower() else "yes"
+                
+                txt_field.clear()
                 txt_field.send_keys(ans)
                 time.sleep(1)
                 
-                # JobSailor's Save Button XPath
-                save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div | //div[contains(@class, 'sendMsg')]")
-                driver.execute_script("arguments[0].click();", save_btn)
+                # Use ENTER key as the primary, most reliable save method
+                txt_field.send_keys(Keys.ENTER) 
+                
+                # Backup click just in case ENTER doesn't trigger it
+                force_click_save() 
                 continue
             
-            # Exit loop if no fields exist
+            # Exit loop if no recognized fields exist
             status = False
         except Exception as e:
             status = False
