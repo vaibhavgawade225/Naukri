@@ -35,7 +35,7 @@ stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32
 def save_screenshot(name):
     """Creates the logs directory if missing and saves the screenshot."""
     log_dir = os.path.join(os.getcwd(), "logs")
-    os.makedirs(log_dir, exist_ok=True) # Safe folder creation
+    os.makedirs(log_dir, exist_ok=True)
     path = os.path.join(log_dir, f"{name}_{int(time.time())}.png")
     driver.save_screenshot(path)
     print(f"📸 Screenshot saved: {path}")
@@ -70,17 +70,13 @@ def inject_cookies():
 def get_job_links():
     """Searches jobs using the exact URL Naukri generated, sorted by date."""
     print("🔍 Searching for Java Developer jobs (Pune, 1 Yr Exp, Date Sort)...")
-    
-    # Using your exact URL + '&sort=d' to ensure freshest jobs first
     url = "https://www.naukri.com/java-developer-jobs-in-pune?k=java%20developer&l=pune&experience=1&nignbevent_src=jobsearchDeskGNB&sort=d"
-    
     driver.get(url)
     time.sleep(5)
     
     save_screenshot("search_page_verification")
     
     links = []
-    # Broadened locator to catch all job cards
     elements = driver.find_elements(By.XPATH, "//a[contains(@class, 'title') or contains(@href, '/job-listings')]")
     for el in elements:
         href = el.get_attribute("href")
@@ -104,7 +100,6 @@ for job_url in job_links:
     time.sleep(3)
 
     try:
-        # JobSailor Checks: Skip conditions
         if driver.find_elements(By.ID, "already-applied"):
             print("⏩ Already applied. Skipping.")
             continue
@@ -115,22 +110,19 @@ for job_url in job_links:
             print("⏩ Job expired. Skipping.")
             continue
 
-        # Click Apply
         apply_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[text()='Apply']")))
         driver.execute_script("arguments[0].click();", apply_btn)
         print("🖱️ Apply clicked. Starting questionnaire...")
         time.sleep(3)
 
-        # --- JOBSAILOR QUESTIONNAIRE LOGIC (No AI) ---
         status = True
         loop_guard = 0
         last_question = ""
 
         while status and loop_guard < 8:
             loop_guard += 1
-            time.sleep(2) # Mandatory UI wait
+            time.sleep(2)
             
-            # 1. Success Check (Using JobSailor's specific success message XPath)
             success_xpath = "//span[contains(@class, 'apply-message') and contains(text(), 'successfully applied')]"
             if driver.find_elements(By.XPATH, success_xpath) or "successfully applied" in driver.page_source.lower():
                 applied_count += 1
@@ -139,7 +131,6 @@ for job_url in job_links:
                 status = False
                 break
 
-            # 2. Anti-Loop Protection
             try:
                 current_q = driver.find_element(By.XPATH, "//li[contains(@class, 'botItem')]").text
                 if current_q == last_question and loop_guard > 1:
@@ -151,7 +142,6 @@ for job_url in job_links:
             except: pass
 
             try:
-                # 3. Handle Radios (Pick First)
                 radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
                 if radios:
                     print("🤖 Selecting first radio option...")
@@ -159,4 +149,32 @@ for job_url in job_links:
                     driver.execute_script("arguments[0].click();", first_input)
                     time.sleep(1)
                     
-                    # JobSailor's Exact Save
+                    save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div | //div[contains(@class, 'sendMsg')]")
+                    driver.execute_script("arguments[0].click();", save_btn)
+                    continue
+
+                text_areas = driver.find_elements(By.XPATH, "//div[contains(@class, 'textArea')]")
+                if text_areas:
+                    print("🤖 Entering fallback text...")
+                    txt_field = text_areas[0].find_element(By.TAG_NAME, "input") if text_areas[0].find_elements(By.TAG_NAME, "input") else text_areas[0]
+                    ans = "2" if "experience" in driver.page_source.lower() else "yes"
+                    txt_field.send_keys(ans)
+                    time.sleep(1)
+                    
+                    save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div | //div[contains(@class, 'sendMsg')]")
+                    driver.execute_script("arguments[0].click();", save_btn)
+                    continue
+                
+                status = False
+
+            # THIS WAS THE MISSING EXCEPT BLOCK FOR THE INNER TRY
+            except Exception as e:
+                status = False
+
+    # THIS IS THE EXCEPT BLOCK FOR THE OUTER TRY (The job application process)
+    except Exception as e:
+        error_name = type(e).__name__
+        print(f"❌ Error during application: {error_name}")
+        save_screenshot(f"FAIL_{error_name}")
+
+driver.quit()
