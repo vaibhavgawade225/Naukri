@@ -28,17 +28,13 @@ options.add_argument("--window-size=1920,1080")
 options.add_argument("--disable-notifications")
 
 driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 15)
+wait = WebDriverWait(driver, 10)
 
 stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
 
 def save_screenshot(name):
-    """Saves a screenshot to the logs folder for GitHub Artifacts."""
-    if not os.path.exists("logs"):
-        os.makedirs("logs")
-    path = f"logs/{name}_{int(time.time())}.png"
-    driver.save_screenshot(path)
-    print(f"📸 Screenshot saved: {path}")
+    if not os.path.exists("logs"): os.makedirs("logs")
+    driver.save_screenshot(f"logs/{name}_{int(time.time())}.png")
 
 def inject_cookies():
     driver.get("https://www.naukri.com/")
@@ -55,37 +51,29 @@ def inject_cookies():
                     n, v = pair.strip().split('=', 1)
                     driver.add_cookie({'name': n.strip(), 'value': v.strip(), 'domain': '.naukri.com'})
         driver.refresh()
-        print("✅ Login verified via cookies.")
+        print("✅ Login verified.")
     except Exception as e: print(f"❌ Cookie Error: {e}")
 
 def get_job_links():
-    """Logic to search and fetch latest Java jobs in Pune/Mumbai (0-2 Yrs)"""
     print("🔍 Searching for Java Developer jobs (Pune/Mumbai, 0-2 Yrs)...")
-    # This URL specifically targets Java, Mumbai/Pune, 0-2 Exp, sorted by Date
     search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d"
     driver.get(search_url)
     time.sleep(5)
-    
     links = []
     job_elements = driver.find_elements(By.CSS_SELECTOR, "a.title")
     for el in job_elements:
         href = el.get_attribute("href")
-        if href and "/job-listings" in href:
-            links.append(href)
-    
+        if href and "/job-listings" in href: links.append(href)
     print(f"🎯 Found {len(links)} potential jobs.")
-    return links[:20] # Take the top 20 latest
+    return links[:20]
 
-# --- START AUTOMATION ---
+# --- START ---
 inject_cookies()
 job_links = get_job_links()
 
 for job_url in job_links:
-    if applied_count >= MAX_APPLIES:
-        print("🏁 Daily limit reached. Stopping.")
-        break
-    
-    print(f"🚀 Visiting: {job_url.split('/')[-1][:50]}...")
+    if applied_count >= MAX_APPLIES: break
+    print(f"🚀 Visiting Job: {job_url.split('/')[-1][:30]}")
     driver.get(job_url)
     time.sleep(4)
 
@@ -94,72 +82,58 @@ for job_url in job_links:
             print("⏩ Already applied.")
             continue
 
-        # FIND APPLY BUTTON
-        apply_selectors = ["//button[contains(text(),'Apply')]", "//span[contains(text(),'Apply')]", "//button[@id='apply-button']"]
-        apply_btn = None
-        for selector in apply_selectors:
+        # FIND APPLY
+        apply_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[text()='Apply']")))
+        driver.execute_script("arguments[0].click();", apply_btn)
+        print("🖱️ Apply clicked.")
+        time.sleep(5)
+
+        # --- JOBSAILOR STYLE CHATBOT LOOP ---
+        status = True
+        loop_guard = 0 
+        while status and loop_guard < 10:
+            loop_guard += 1
+            
+            # Check for Success Message
+            success_check = driver.find_elements(By.XPATH, "//span[contains(text(), 'successfully applied')]")
+            if success_check:
+                applied_count += 1
+                save_screenshot(f"success_{applied_count}")
+                print(f"🎉 SUCCESS! Total: {applied_count}")
+                status = False
+                break
+
             try:
-                apply_btn = driver.find_element(By.XPATH, selector)
-                if apply_btn.is_displayed(): break
-            except: continue
-
-        if apply_btn:
-            # Force click using JS and scroll to avoid ElementNotInteractableException
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", apply_btn)
-            time.sleep(1)
-            driver.execute_script("arguments[0].click();", apply_btn)
-            print("🖱️ Apply clicked.")
-            time.sleep(5)
-
-            # --- CHATBOT LOOP ---
-            start_time = time.time()
-            while time.time() - start_time < 60: # 1 minute timeout per job
-                # Check for success
-                if "successfully applied" in driver.page_source.lower() or "application submitted" in driver.page_source.lower():
-                    applied_count += 1
-                    print(f"🎉 Success! Applied Count: {applied_count}")
-                    save_screenshot(f"success_job_{applied_count}")
-                    break
-                
-                # 1. Handle Multiple Choice (Radios)
+                # 1. Handle Radio Buttons (Pick 1st)
                 radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
                 if radios:
-                    print("🤖 Chatbot: Picking first option.")
                     driver.execute_script("arguments[0].click();", radios[0].find_element(By.TAG_NAME, "input"))
-                    time.sleep(2)
-                    try:
-                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg')]")
-                        driver.execute_script("arguments[0].click();", save_btn)
-                    except: pass
+                    time.sleep(1)
+                    # Use JobSailor's specific Save Button Xpath
+                    save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div")
+                    driver.execute_script("arguments[0].click();", save_btn)
+                    time.sleep(3)
                     continue
 
-                # 2. Handle Text Input (Logical Questions)
+                # 2. Handle Text Areas
                 text_areas = driver.find_elements(By.CLASS_NAME, "textArea")
-                if text_areas:
-                    # If question is about experience, type '2', else type 'yes'
-                    context = driver.page_source.lower()
-                    ans = "2" if ("experience" in context or "years" in context) else "yes"
-                    
-                    print(f"🤖 Chatbot: Typing '{ans}'.")
-                    text_areas[0].clear()
+                if text_areas and text_areas[0].is_displayed():
+                    ans = "2" if "experience" in driver.page_source.lower() else "yes"
                     text_areas[0].send_keys(ans)
                     time.sleep(1)
-                    text_areas[0].send_keys(Keys.ENTER) # Hits Enter to trigger next question
-                    
-                    try:
-                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg')]")
-                        driver.execute_script("arguments[0].click();", save_btn)
-                    except: pass
-                    
-                    time.sleep(3) # Wait for page to process
+                    # Force Save click
+                    save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div")
+                    driver.execute_script("arguments[0].click();", save_btn)
+                    time.sleep(3)
                     continue
                 
-                break 
-        else:
-            print("⚠️ No apply button found.")
+                # If neither found, break loop
+                status = False
+            except:
+                status = False
 
     except Exception as e:
         print(f"❌ Failed: {type(e).__name__}")
-        save_screenshot(f"fail_{type(e).__name__}")
+        save_screenshot("fail_log")
 
 driver.quit()
