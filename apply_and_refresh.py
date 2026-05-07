@@ -50,7 +50,6 @@ def inject_cookies():
         return
         
     try:
-        # FIX: Restored robust cookie parsing for both JSON and Raw Text
         if cookies_raw.strip().startswith('['):
             cookies = json.loads(cookies_raw)
             for c in cookies: driver.add_cookie({'name': c['name'], 'value': c['value'], 'domain': '.naukri.com'})
@@ -59,7 +58,6 @@ def inject_cookies():
                 if '=' in pair:
                     n, v = pair.strip().split('=', 1)
                     driver.add_cookie({'name': n.strip(), 'value': v.strip(), 'domain': '.naukri.com'})
-        
         driver.refresh()
         time.sleep(3)
         print("✅ Cookie injection finished.")
@@ -67,17 +65,41 @@ def inject_cookies():
         print(f"❌ Cookie Error: {e}")
 
 def get_job_links():
-    print("🔍 Searching Jobs (Sorted by Date)...")
+    print("🔍 Executing Human-like Search (Pune | 0-2 Yrs | Date Sort)...")
     try:
-        # Main Search: Ensure &sort=d is present
-        url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d"
-        driver.get(url)
-    except:
-        # Fallback Search: Added &sort=d here too!
-        driver.get("https://www.naukri.com/developer-jobs?experience=0&sort=d")
-    
-    time.sleep(4)
-    # Take a screenshot to verify login state and sorting
+        # Step 1: Start at homepage
+        driver.get("https://www.naukri.com/")
+        time.sleep(3)
+        
+        # Step 2: Type Role
+        role_input = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "suggestor-input")))
+        role_input.send_keys("Java Developer")
+        
+        # Step 3: Type Location (Pune ONLY)
+        loc_input = driver.find_elements(By.CLASS_NAME, "suggestor-input")[1]
+        loc_input.send_keys("Pune")
+        
+        # Step 4: Submit Search
+        search_btn = driver.find_element(By.CLASS_NAME, "qsbSubmit")
+        driver.execute_script("arguments[0].click();", search_btn)
+        time.sleep(5)
+
+        # Step 5: Force URL parameters for 0-2 Exp & Date Sort safely
+        current_url = driver.current_url
+        filters = "&experience=0&experience=1&experience=2&sort=d"
+        if "?" in current_url:
+            driver.get(current_url + filters)
+        else:
+            driver.get(current_url + "?" + filters.strip("&"))
+        time.sleep(4)
+
+    except Exception as e:
+        print(f"⚠️ Live search failed, using Direct Backup URL: {e}")
+        backup_url = "https://www.naukri.com/java-developer-jobs-in-pune?k=java%20developer&l=pune&experience=0&experience=1&experience=2&sort=d"
+        driver.get(backup_url)
+        time.sleep(4)
+
+    # Proof of correct filters!
     save_screenshot("search_results") 
     
     links = []
