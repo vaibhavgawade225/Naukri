@@ -50,10 +50,10 @@ def inject_cookies():
 def get_job_links():
     """Fixed link scraping to handle NoneType errors."""
     try:
-        url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d"
+        url = "https://www.naukri.com/developer-jobs?experience=0&experience=1&experience=2"
         driver.get(url)
     except:
-        driver.get("https://www.naukri.com/developer-jobs?experience=0&experience=1&experience=2")
+        driver.get("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d")
     
     time.sleep(3)
     links = []
@@ -65,6 +65,7 @@ def get_job_links():
             links.append(href)
     
     print(f"🎯 Found {len(links)} valid links.")
+    save_screenshot("search_results") # <--- ADD THIS LINE
     return links[:15]
 
 # --- START ---
