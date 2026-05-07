@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium_stealth import stealth
@@ -54,18 +55,23 @@ def inject_cookies():
     except Exception as e: print(f"❌ Cookie Error: {e}")
 
 def get_job_links():
-    print("🔍 Searching for Java Developer jobs (Pune/Mumbai, 0-2 Yrs)...")
-    search_url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d"
+    print("🔍 Searching for Java Developer jobs (Pune ONLY, 0-2 Yrs)...")
+    # Clean URL: Removed Mumbai, kept Java, 0-2 Yrs, and Sort by Date
+    search_url = "https://www.naukri.com/java-developer-jobs-in-pune?k=java%20developer&l=pune&experience=0&sort=d"
+    
     driver.get(search_url)
-    time.sleep(5)
+    time.sleep(5) # Wait for search results to load
+    
     links = []
+    # Fetch job titles which contain the links
     job_elements = driver.find_elements(By.CSS_SELECTOR, "a.title")
     for el in job_elements:
         href = el.get_attribute("href")
         if href and "/job-listings" in href:
             links.append(href)
-    print(f"🎯 Found {len(links)} potential jobs.")
-    return links[:20]
+            
+    print(f"🎯 Found {len(links)} potential jobs in Pune.")
+    return links[:20] # Returns the 20 freshest jobs
 
 # --- START AUTOMATION ---
 inject_cookies()
@@ -101,48 +107,53 @@ for job_url in job_links:
 
             # --- UPDATED CHATBOT LOGIC ---
             start_time = time.time()
-            while time.time() - start_time < 45: # Increased timeout for multi-step bots
-                if "successfully applied" in driver.page_source.lower() or "application submitted" in driver.page_source.lower():
+            while time.time() - start_time < 60: # 1-minute timeout for deep bots
+                if "successfully applied" in driver.page_source.lower():
                     applied_count += 1
                     print(f"🎉 Applied! (Total: {applied_count})")
+                    save_screenshot(f"success_job_{applied_count}")
                     break
                 
-                # 1. Multiple Choice: Always pick option 1
+                # 1. Handle Multiple Choice
                 radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
                 if radios:
                     print("🤖 Chatbot: Picking option 1.")
                     driver.execute_script("arguments[0].click();", radios[0].find_element(By.TAG_NAME, "input"))
                     time.sleep(2)
+                    # Attempt to click Save
                     try:
-                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg') and text()='Save']")
+                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg')]")
                         driver.execute_script("arguments[0].click();", save_btn)
                     except: pass
+                    time.sleep(2) # Wait for animation
                     continue
 
-                # 2. Text/Logical Questions: Type "yes" or "2"
+                # 2. Handle Text Input (The "ElementNotInteractable" Fix)
                 text_areas = driver.find_elements(By.CLASS_NAME, "textArea")
-                if text_areas:
-                    # Logic: If it looks like an experience question, use "2", otherwise use "yes"
-                    question_context = driver.page_source.lower()
-                    if "experience" in question_context or "years" in question_context:
-                        ans = "2"
-                    else:
-                        ans = "yes"
-                    
+                if text_areas and text_areas[0].is_displayed():
+                    ans = "2" if "experience" in driver.page_source.lower() else "yes"
                     print(f"🤖 Chatbot: Entering '{ans}'.")
+                    
+                    # Clear field first to avoid "22222"
+                    text_areas[0].clear() 
                     text_areas[0].send_keys(ans)
                     time.sleep(1)
+                    text_areas[0].send_keys(Keys.ENTER) # HIT ENTER as a backup to clicking Save
+                    
+                    # Try to click the Save button as well
                     try:
-                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg') and text()='Save']")
+                        save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg')]")
                         driver.execute_script("arguments[0].click();", save_btn)
                     except: pass
+                    
+                    time.sleep(3) # Mandatory wait for Naukri's "Saving" animation
                     continue
                 
-                # 3. Final Fallback: Just click 'Save' if it's there but bot is stuck
+                # 3. Fallback: If no input found, try clicking ANY visible Save/Next button
                 try:
-                    save_btn = driver.find_element(By.XPATH, "//div[text()='Save']")
-                    if save_btn.is_displayed():
-                        driver.execute_script("arguments[0].click();", save_btn)
+                    any_btn = driver.find_element(By.XPATH, "//div[text()='Save' or text()='Next' or text()='Submit']")
+                    if any_btn.is_displayed():
+                        driver.execute_script("arguments[0].click();", any_btn)
                         time.sleep(2)
                         continue
                 except: pass
