@@ -6,8 +6,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium_stealth import stealth
@@ -33,8 +33,12 @@ wait = WebDriverWait(driver, 15)
 stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
 
 def save_screenshot(name):
-    if not os.path.exists("logs"): os.makedirs("logs")
-    driver.save_screenshot(f"logs/{name}_{int(time.time())}.png")
+    """Saves a screenshot to the logs folder for GitHub Artifacts."""
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    path = f"logs/{name}_{int(time.time())}.png"
+    driver.save_screenshot(path)
+    print(f"📸 Screenshot saved: {path}")
 
 def inject_cookies():
     driver.get("https://www.naukri.com/")
@@ -72,13 +76,14 @@ def get_job_links():
     print(f"🎯 Found {len(links)} potential jobs.")
     return links[:20] # Take the top 20 latest
 
-
 # --- START AUTOMATION ---
 inject_cookies()
 job_links = get_job_links()
 
 for job_url in job_links:
-    if applied_count >= MAX_APPLIES: break
+    if applied_count >= MAX_APPLIES:
+        print("🏁 Daily limit reached. Stopping.")
+        break
     
     print(f"🚀 Visiting: {job_url.split('/')[-1][:50]}...")
     driver.get(job_url)
@@ -99,65 +104,56 @@ for job_url in job_links:
             except: continue
 
         if apply_btn:
+            # Force click using JS and scroll to avoid ElementNotInteractableException
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", apply_btn)
             time.sleep(1)
             driver.execute_script("arguments[0].click();", apply_btn)
             print("🖱️ Apply clicked.")
             time.sleep(5)
 
-            # --- UPDATED CHATBOT LOGIC ---
+            # --- CHATBOT LOOP ---
             start_time = time.time()
-            while time.time() - start_time < 60: # 1-minute timeout for deep bots
-                if "successfully applied" in driver.page_source.lower():
+            while time.time() - start_time < 60: # 1 minute timeout per job
+                # Check for success
+                if "successfully applied" in driver.page_source.lower() or "application submitted" in driver.page_source.lower():
                     applied_count += 1
-                    print(f"🎉 Applied! (Total: {applied_count})")
+                    print(f"🎉 Success! Applied Count: {applied_count}")
                     save_screenshot(f"success_job_{applied_count}")
                     break
                 
-                # 1. Handle Multiple Choice
+                # 1. Handle Multiple Choice (Radios)
                 radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
                 if radios:
-                    print("🤖 Chatbot: Picking option 1.")
+                    print("🤖 Chatbot: Picking first option.")
                     driver.execute_script("arguments[0].click();", radios[0].find_element(By.TAG_NAME, "input"))
                     time.sleep(2)
-                    # Attempt to click Save
                     try:
                         save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg')]")
                         driver.execute_script("arguments[0].click();", save_btn)
                     except: pass
-                    time.sleep(2) # Wait for animation
                     continue
 
-                # 2. Handle Text Input (The "ElementNotInteractable" Fix)
+                # 2. Handle Text Input (Logical Questions)
                 text_areas = driver.find_elements(By.CLASS_NAME, "textArea")
-                if text_areas and text_areas[0].is_displayed():
-                    ans = "2" if "experience" in driver.page_source.lower() else "yes"
-                    print(f"🤖 Chatbot: Entering '{ans}'.")
+                if text_areas:
+                    # If question is about experience, type '2', else type 'yes'
+                    context = driver.page_source.lower()
+                    ans = "2" if ("experience" in context or "years" in context) else "yes"
                     
-                    # Clear field first to avoid "22222"
-                    text_areas[0].clear() 
+                    print(f"🤖 Chatbot: Typing '{ans}'.")
+                    text_areas[0].clear()
                     text_areas[0].send_keys(ans)
                     time.sleep(1)
-                    text_areas[0].send_keys(Keys.ENTER) # HIT ENTER as a backup to clicking Save
+                    text_areas[0].send_keys(Keys.ENTER) # Hits Enter to trigger next question
                     
-                    # Try to click the Save button as well
                     try:
                         save_btn = driver.find_element(By.XPATH, "//div[contains(@class, 'sendMsg')]")
                         driver.execute_script("arguments[0].click();", save_btn)
                     except: pass
                     
-                    time.sleep(3) # Mandatory wait for Naukri's "Saving" animation
+                    time.sleep(3) # Wait for page to process
                     continue
                 
-                # 3. Fallback: If no input found, try clicking ANY visible Save/Next button
-                try:
-                    any_btn = driver.find_element(By.XPATH, "//div[text()='Save' or text()='Next' or text()='Submit']")
-                    if any_btn.is_displayed():
-                        driver.execute_script("arguments[0].click();", any_btn)
-                        time.sleep(2)
-                        continue
-                except: pass
-
                 break 
         else:
             print("⚠️ No apply button found.")
