@@ -28,7 +28,7 @@ options.add_argument("--window-size=1920,1080")
 options.add_argument("--disable-notifications")
 
 driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 5)
+wait = WebDriverWait(driver, 5) # Fast timeout for 3-min run
 
 stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
 
@@ -48,7 +48,7 @@ def inject_cookies():
     except: pass
 
 def get_job_links():
-    """Fixed link scraping logic to avoid TypeError."""
+    """Fixed link scraping to handle NoneType errors."""
     try:
         url = "https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d"
         driver.get(url)
@@ -60,11 +60,11 @@ def get_job_links():
     elements = driver.find_elements(By.CSS_SELECTOR, "a.title")
     for el in elements:
         href = el.get_attribute("href")
-        # FIXED: Added check for 'if href' to prevent NoneType error
-        if href and "/job-listings" in href:
+        # FIX: Check if href exists before checking string content
+        if href and isinstance(href, str) and "/job-listings" in href:
             links.append(href)
     
-    print(f"🎯 Found {len(links)} links.")
+    print(f"🎯 Found {len(links)} valid links.")
     return links[:15]
 
 # --- START ---
@@ -84,18 +84,21 @@ for job_url in job_links:
         driver.execute_script("arguments[0].click();", apply_btn)
         time.sleep(3)
 
-        # --- CHATBOT LOGIC ---
+        # --- CHATBOT: ANTI-REPEAT LOGIC ---
         last_q_text = ""
-        for _ in range(6): # Fast loop limit
+        for _ in range(6): # Limit steps for speed
             if "successfully applied" in driver.page_source.lower():
                 applied_count += 1
                 save_screenshot(f"success_{applied_count}")
+                print(f"🎉 Applied to Job {applied_count}")
                 break
 
-            # Prevent repeat answers
+            # Check if the question changed
             try:
                 current_q = driver.find_element(By.XPATH, "//li[contains(@class, 'botItem')]").text
-                if current_q == last_q_text: break
+                if current_q == last_q_text: 
+                    print("🛑 Same question detected. Skipping job.")
+                    break
                 last_q_text = current_q
             except: pass
 
@@ -105,17 +108,17 @@ for job_url in job_links:
                 if radios:
                     driver.execute_script("arguments[0].click();", radios[0].find_element(By.TAG_NAME, "input"))
                 
-                # 2. Text Area
+                # 2. Text Areas
                 elif driver.find_elements(By.CLASS_NAME, "textArea"):
                     txt = driver.find_element(By.CLASS_NAME, "textArea")
                     ans = "2" if "experience" in driver.page_source.lower() else "yes"
                     txt.send_keys(ans)
                     txt.send_keys(Keys.ENTER)
 
-                # Save Button (JobSailor style)
-                save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div")
+                # Save Button (Precise XPath)
+                save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div | //div[contains(@class, 'sendMsg')]")
                 driver.execute_script("arguments[0].click();", save_btn)
-                time.sleep(2) # Cooldown
+                time.sleep(2) # 2s wait for next question
             except: break
             
     except: continue
