@@ -65,41 +65,19 @@ def inject_cookies():
         print(f"❌ Cookie Error: {e}")
 
 def get_job_links():
-    print("🔍 Executing Human-like Search (Pune | 0-2 Yrs | Date Sort)...")
+    print("🔍 Executing URL Search (Pune ONLY | 0-2 Yrs | Date Sort)...")
     try:
-        # Step 1: Start at homepage
-        driver.get("https://www.naukri.com/")
-        time.sleep(3)
-        
-        # Step 2: Type Role
-        role_input = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "suggestor-input")))
-        role_input.send_keys("Java Developer")
-        
-        # Step 3: Type Location (Pune ONLY)
-        loc_input = driver.find_elements(By.CLASS_NAME, "suggestor-input")[1]
-        loc_input.send_keys("Pune")
-        
-        # Step 4: Submit Search
-        search_btn = driver.find_element(By.CLASS_NAME, "qsbSubmit")
-        driver.execute_script("arguments[0].click();", search_btn)
-        time.sleep(5)
-
-        # Step 5: Force URL parameters for 0-2 Exp & Date Sort safely
-        current_url = driver.current_url
-        filters = "&experience=0&experience=1&experience=2&sort=d"
-        if "?" in current_url:
-            driver.get(current_url + filters)
-        else:
-            driver.get(current_url + "?" + filters.strip("&"))
-        time.sleep(4)
-
+        # EXACT URL REQUESTED: Pune, Java, 0-2 Yrs, Sorted by Date
+        url = "https://www.naukri.com/developer-jobs?experience=0&experience=1&experience=2&sort=d"
+        driver.get(url)
     except Exception as e:
-        print(f"⚠️ Live search failed, using Direct Backup URL: {e}")
-        backup_url = "https://www.naukri.com/java-developer-jobs-in-pune?k=java%20developer&l=pune&experience=0&experience=1&experience=2&sort=d"
-        driver.get(backup_url)
-        time.sleep(4)
-
-    # Proof of correct filters!
+        print(f"⚠️ Primary URL failed, using Backup URL: {e}")
+        # BACKUP URL
+        driver.get("https://www.naukri.com/java-developer-jobs-in-pune?k=java%20developer&l=pune&experience=0&experience=1&experience=2&sort=d")
+    
+    time.sleep(5) # Wait for jobs to load
+    
+    # Proof of Search Results
     save_screenshot("search_results") 
     
     links = []
@@ -110,7 +88,7 @@ def get_job_links():
             links.append(href)
     
     print(f"🎯 Found {len(links)} valid links.")
-    return links[:15]
+    return links[:15] # Keep it fast for the 3-minute limit
 
 # --- START ---
 inject_cookies()
@@ -142,7 +120,7 @@ for job_url in job_links:
 
             try:
                 current_q = driver.find_element(By.XPATH, "//li[contains(@class, 'botItem')]").text
-                if current_q == last_q_text: break
+                if current_q == last_q_text: break # Stop if question didn't change
                 last_q_text = current_q
             except: pass
 
