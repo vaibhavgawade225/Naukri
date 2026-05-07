@@ -55,53 +55,25 @@ def inject_cookies():
     except Exception as e: print(f"❌ Cookie Error: {e}")
 
 def get_job_links_via_query():
-    """Performs a live query search on Naukri to get the freshest results."""
     print("🔍 Performing live search for 'Java Developer'...")
     driver.get("https://www.naukri.com/")
     time.sleep(3)
-    
     try:
-        # 1. Type Role
         role_input = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "suggestor-input")))
         role_input.send_keys("Java Developer")
-        
-        # 2. Type Location
         loc_input = driver.find_elements(By.CLASS_NAME, "suggestor-input")[1]
         loc_input.send_keys("Pune, Mumbai")
-        
-        # 3. Click Search
         search_btn = driver.find_element(By.CLASS_NAME, "qsbSubmit")
         driver.execute_script("arguments[0].click();", search_btn)
         time.sleep(5)
-
-        # 4. Filter for 0 years experience
-        exp_dropdown = wait.until(EC.element_to_be_clickable((By.ID, "experienceFilter")))
-        driver.execute_script("arguments[0].click();", exp_dropdown)
-        time.sleep(2)
-        zero_exp = driver.find_element(By.XPATH, "//span[text()='0-1 Yrs' or text()='0 Yrs']")
-        driver.execute_script("arguments[0].click();", zero_exp)
-        time.sleep(3)
-
-        # 5. Sort by Date
-        sort_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[text()='Sort by']")))
-        driver.execute_script("arguments[0].click();", sort_btn)
-        time.sleep(1)
-        date_sort = driver.find_element(By.XPATH, "//ul/li[text()='Date']")
-        driver.execute_script("arguments[0].click();", date_sort)
-        time.sleep(3)
-
-    except Exception as e:
-        print(f"⚠️ Search setup failed, falling back to direct URL: {e}")
+    except:
         driver.get("https://www.naukri.com/java-developer-jobs-in-mumbai-pune?k=java%20developer&l=mumbai%2C%20pune&experience=0&sort=d")
-        time.sleep(5)
-
+    
     links = []
     job_elements = driver.find_elements(By.CSS_SELECTOR, "a.title")
     for el in job_elements:
         href = el.get_attribute("href")
         if href and "/job-listings" in href: links.append(href)
-    
-    print(f"🎯 Found {len(links)} potential jobs via live query.")
     return links[:20]
 
 # --- START ---
@@ -115,26 +87,22 @@ for job_url in job_links:
     time.sleep(4)
 
     try:
-        # SKIP LOGIC (From JobSailor)
         if "already applied" in driver.page_source.lower():
             print("⏩ Already applied.")
             continue
-            
-        # If it's a company site job, skip it immediately
         if driver.find_elements(By.ID, "company-site-button"):
             print("⏩ External site job (skipping).")
             continue
 
-        # FIND APPLY
         apply_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[text()='Apply']")))
         driver.execute_script("arguments[0].click();", apply_btn)
         print("🖱️ Apply clicked.")
         time.sleep(5)
 
-        # --- CHATBOT LOOP ---
+        # --- CHATBOT LOOP WITH 2s WAIT ---
         status = True
         loop_guard = 0
-        while status and loop_guard < 8:
+        while status and loop_guard < 10:
             loop_guard += 1
             if "successfully applied" in driver.page_source.lower():
                 applied_count += 1
@@ -143,25 +111,32 @@ for job_url in job_links:
                 break
 
             try:
-                # Radios
+                # 1. Radio Buttons
                 radios = driver.find_elements(By.CSS_SELECTOR, ".ssrc__radio-btn-container")
                 if radios:
                     driver.execute_script("arguments[0].click();", radios[0].find_element(By.TAG_NAME, "input"))
                     time.sleep(1)
+                    
+                    # JobSailor's Save Button XPath
                     save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div")
                     driver.execute_script("arguments[0].click();", save_btn)
-                    time.sleep(3)
+                    
+                    print("⌛ Waiting 2s for next question...")
+                    time.sleep(2) # <--- THE 2 SECOND WAIT
                     continue
 
-                # Text
+                # 2. Text Areas
                 text_areas = driver.find_elements(By.CLASS_NAME, "textArea")
                 if text_areas:
                     ans = "2" if "experience" in driver.page_source.lower() else "yes"
                     text_areas[0].send_keys(ans)
                     time.sleep(1)
+                    
                     save_btn = driver.find_element(By.XPATH, "/html/body/div[2]/div/div[1]/div[3]/div/div")
                     driver.execute_script("arguments[0].click();", save_btn)
-                    time.sleep(3)
+                    
+                    print("⌛ Waiting 2s for next question...")
+                    time.sleep(2) # <--- THE 2 SECOND WAIT
                     continue
                 
                 status = False
@@ -169,6 +144,5 @@ for job_url in job_links:
 
     except Exception as e:
         print(f"❌ Skipped: {type(e).__name__}")
-        save_screenshot("job_skip_log")
 
 driver.quit()
