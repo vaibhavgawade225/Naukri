@@ -46,3 +46,4 @@ jobs:
         with:
           name: naukri-debug-logs
           path: logs/
+          retention-days: 1
