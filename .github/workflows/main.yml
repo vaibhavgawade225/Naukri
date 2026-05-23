@@ -2,6 +2,7 @@ name: Naukri Daily Automation
 
 on:
   schedule:
+    - cron: '6 19 * * *'       # 19:06 (7:06 PM) UTC
     - cron: '30 3 * * 1-5'    # 9:00 AM IST
     - cron: '0 5 * * 1-5'     # 10:30 AM IST
     - cron: '30 6 * * 1-5'    # 12:00 PM IST
