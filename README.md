@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-# Naukri
-=======
-# naukri-auto-apply
->>>>>>> 2f6d15f (Initial commit)
+# Naukri - Auto Apply
+
+An automated tool for applying to jobs on Naukri.
